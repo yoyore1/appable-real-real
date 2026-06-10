@@ -1,0 +1,24 @@
+{
+  "name": "@appable/db",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:push": "prisma db push",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.8.0"
+  },
+  "devDependencies": {
+    "prisma": "^6.8.0",
+    "typescript": "^5.8.0"
+  }
+}

@@ -1,0 +1,120 @@
+import type { FastifyInstance } from "fastify";
+import { getDb } from "@appable/db";
+import { requireAuth } from "./auth.js";
+import { ensureRunning, previewUrls, stopProject, undoLastChange } from "./orchestrator.js";
+import { isBuilding } from "./agent/loop.js";
+
+export async function projectRoutes(app: FastifyInstance): Promise<void> {
+  app.addHook("preHandler", requireAuth);
+
+  app.post<{ Body: { name?: string } }>("/projects", async (req) => {
+    const db = getDb();
+    const project = await db.project.create({
+      data: {
+        name: req.body?.name?.trim() || "Untitled app",
+        userId: req.user.userId,
+        status: "new",
+      },
+    });
+    return project;
+  });
+
+  app.get("/projects", async (req) => {
+    const db = getDb();
+    return db.project.findMany({
+      where: { userId: req.user.userId },
+      orderBy: { updatedAt: "desc" },
+      include: { specs: { orderBy: { version: "desc" }, take: 1 } },
+    });
+  });
+
+  app.get<{ Params: { id: string } }>("/projects/:id", async (req, reply) => {
+    const db = getDb();
+    const project = await db.project.findUnique({
+      where: { id: req.params.id },
+      include: {
+        specs: { orderBy: { version: "desc" }, take: 1 },
+        checkpoints: { orderBy: { createdAt: "desc" }, take: 20 },
+      },
+    });
+    if (!project || project.userId !== req.user.userId) {
+      return reply.code(404).send({ error: "Project not found" });
+    }
+    const preview =
+      project.status === "running" && project.metroPort
+        ? previewUrls(project.metroPort)
+        : null;
+    return { ...project, preview };
+  });
+
+  app.get<{ Params: { id: string }; Querystring: { kind?: string } }>(
+    "/projects/:id/messages",
+    async (req, reply) => {
+      const db = getDb();
+      const project = await db.project.findUnique({ where: { id: req.params.id } });
+      if (!project || project.userId !== req.user.userId) {
+        return reply.code(404).send({ error: "Project not found" });
+      }
+      const kind = req.query.kind ?? "interview";
+      const conversation = await db.conversation.findUnique({
+        where: { projectId_kind: { projectId: project.id, kind } },
+        include: { messages: { orderBy: { createdAt: "asc" } } },
+      });
+      return conversation?.messages ?? [];
+    },
+  );
+
+  /**
+   * Dev-mode payment: marks the $1 build fee as paid.
+   * TODO: replace with a Stripe Checkout session + webhook when keys exist.
+   */
+  app.post<{ Params: { id: string } }>("/projects/:id/undo", async (req, reply) => {
+    const db = getDb();
+    const project = await db.project.findUnique({ where: { id: req.params.id } });
+    if (!project || project.userId !== req.user.userId) {
+      return reply.code(404).send({ error: "Project not found" });
+    }
+    if (isBuilding(project.id)) {
+      return reply.code(409).send({ error: "Wait until the current change finishes" });
+    }
+    const ok = await undoLastChange(project.id);
+    if (!ok) {
+      return reply.code(400).send({ error: "Nothing to undo yet" });
+    }
+    const count = await db.checkpoint.count({ where: { projectId: project.id } });
+    return { ok: true, canUndo: count >= 2 };
+  });
+
+  app.post<{ Params: { id: string } }>("/projects/:id/pay", async (req, reply) => {
+    const db = getDb();
+    const project = await db.project.findUnique({ where: { id: req.params.id } });
+    if (!project || project.userId !== req.user.userId) {
+      return reply.code(404).send({ error: "Project not found" });
+    }
+    const updated = await db.project.update({
+      where: { id: project.id },
+      data: { paidAt: project.paidAt ?? new Date() },
+    });
+    return { ok: true, paidAt: updated.paidAt };
+  });
+
+  app.post<{ Params: { id: string } }>("/projects/:id/start", async (req, reply) => {
+    const db = getDb();
+    const project = await db.project.findUnique({ where: { id: req.params.id } });
+    if (!project || project.userId !== req.user.userId) {
+      return reply.code(404).send({ error: "Project not found" });
+    }
+    const preview = await ensureRunning(project.id);
+    return { preview };
+  });
+
+  app.post<{ Params: { id: string } }>("/projects/:id/stop", async (req, reply) => {
+    const db = getDb();
+    const project = await db.project.findUnique({ where: { id: req.params.id } });
+    if (!project || project.userId !== req.user.userId) {
+      return reply.code(404).send({ error: "Project not found" });
+    }
+    await stopProject(project.id);
+    return { ok: true };
+  });
+}

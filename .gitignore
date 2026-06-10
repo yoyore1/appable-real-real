@@ -141,3 +141,10 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# Turborepo
+.turbo/
+
+# Appable project volumes (user app files live here in dev)
+data/projects/
+

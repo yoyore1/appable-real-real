@@ -1,0 +1,21 @@
+{
+  "name": "@appable/proxy",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "http-proxy": "^1.18.1",
+    "ioredis": "^5.11.1"
+  },
+  "devDependencies": {
+    "@types/http-proxy": "^1.17.17",
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3"
+  }
+}
