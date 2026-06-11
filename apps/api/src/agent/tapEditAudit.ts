@@ -1,13 +1,24 @@
 import { listProjectFiles, readProjectFile } from "../orchestrator.js";
 
+export type TapEditAuditIssueKind =
+  | "text-missing-testid"
+  | "pressable-missing-testid"
+  | "title-split-across-text"
+  | "day-display-hack"
+  | "special-case-title-render";
+
 export interface TapEditAuditIssue {
   file: string;
   line: number;
-  kind: "text-missing-testid" | "pressable-missing-testid";
+  kind: TapEditAuditIssueKind;
   snippet: string;
 }
 
-const AUDIT_GLOBS = [/^(src\/screens|src\/components)\/.+\.(tsx|jsx)$/, /^App\.tsx$/];
+const AUDIT_GLOBS = [
+  /^(src\/screens|src\/components)\/.+\.(tsx|jsx)$/,
+  /^src\/lib\/.+\.(tsx|ts)$/,
+  /^App\.tsx$/,
+];
 
 /** Style keys used for long legal/footer copy — tap-to-edit targets labels, not these. */
 const SKIP_TEXT_STYLE_KEYS = new Set([
@@ -16,6 +27,9 @@ const SKIP_TEXT_STYLE_KEYS = new Set([
   "footerSubtext",
   "legalContent",
 ]);
+
+const FULL_DAY_NAMES =
+  /Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday/;
 
 function isAuditableFile(path: string): boolean {
   return AUDIT_GLOBS.some((re) => re.test(path.replace(/\\/g, "/")));
@@ -95,10 +109,92 @@ function findPressableIssues(content: string, file: string): TapEditAuditIssue[]
   return issues;
 }
 
+/**
+ * One label broken into multiple Text nodes (e.g. title.split + fragment of Text spans).
+ */
+function findSplitTitleIssues(content: string, file: string): TapEditAuditIssue[] {
+  const issues: TapEditAuditIssue[] = [];
+  const re = /\.split\s*\(/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(content)) !== null) {
+    const slice = content.slice(m.index, m.index + 700);
+    const textTags = (slice.match(/<Text\b/g) || []).length;
+    if (textTags >= 2 && (slice.includes("<>") || slice.includes("Fragment"))) {
+      issues.push({
+        file,
+        line: lineNumberAt(content, m.index),
+        kind: "title-split-across-text",
+        snippet: slice.replace(/\s+/g, " ").trim().slice(0, 140),
+      });
+    }
+  }
+
+  const nestedTitleRe = /<Text\b[^>]*testID\s*=\s*[\{`"'][^>`"']*title[^>`"']*[\}`"'][^>]*>[\s\n]*</g;
+  while ((m = nestedTitleRe.exec(content)) !== null) {
+    issues.push({
+      file,
+      line: lineNumberAt(content, m.index),
+      kind: "title-split-across-text",
+      snippet: content
+        .slice(m.index, m.index + 120)
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 140),
+    });
+  }
+
+  return issues;
+}
+
+/** `day === 'Mon' ? "Monday" : day` — breaks tap-to-edit; use {day} from days array. */
+function findDayDisplayHackIssues(content: string, file: string): TapEditAuditIssue[] {
+  const issues: TapEditAuditIssue[] = [];
+  const re =
+    /(\w+)\s*===\s*['"][^'"]+['"]\s*\?\s*["'][^"']+["']\s*:\s*\1\b/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(content)) !== null) {
+    const snippet = content.slice(m.index, m.index + 80).replace(/\s+/g, " ").trim();
+    if (!FULL_DAY_NAMES.test(snippet) && m[0].length < 12) continue;
+    issues.push({
+      file,
+      line: lineNumberAt(content, m.index),
+      kind: "day-display-hack",
+      snippet,
+    });
+  }
+  return issues;
+}
+
+/** renderTitle() with per-item string splits — merge to one Text + data source. */
+function findSpecialCaseTitleRender(content: string, file: string): TapEditAuditIssue[] {
+  const issues: TapEditAuditIssue[] = [];
+  const re = /(?:const|function)\s+renderTitle\b/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(content)) !== null) {
+    issues.push({
+      file,
+      line: lineNumberAt(content, m.index),
+      kind: "special-case-title-render",
+      snippet: content
+        .slice(m.index, m.index + 100)
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 140),
+    });
+  }
+  return issues;
+}
+
 /** Scan one file's source (unit tests + live audit). */
 export function auditFileContent(content: string, file: string): TapEditAuditIssue[] {
   if (!isAuditableFile(file)) return [];
-  return [...findTextIssues(content, file), ...findPressableIssues(content, file)];
+  return [
+    ...findTextIssues(content, file),
+    ...findPressableIssues(content, file),
+    ...findSplitTitleIssues(content, file),
+    ...findDayDisplayHackIssues(content, file),
+    ...findSpecialCaseTitleRender(content, file),
+  ];
 }
 
 export async function auditTapEditReadiness(projectId: string): Promise<TapEditAuditIssue[]> {
@@ -114,27 +210,42 @@ export async function auditTapEditReadiness(projectId: string): Promise<TapEditA
   return issues.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line);
 }
 
+const KIND_LABELS: Record<TapEditAuditIssueKind, string> = {
+  "text-missing-testid": "Text without testID",
+  "pressable-missing-testid": "list row without testID",
+  "title-split-across-text": "split title across Text nodes",
+  "day-display-hack": "day display override ternary",
+  "special-case-title-render": "special-case renderTitle()",
+};
+
 /** Human + agent readable report (capped). */
 export function formatTapEditAuditReport(
   issues: TapEditAuditIssue[],
   maxItems = 30,
 ): string {
-  if (issues.length === 0) return "All checked Text and list rows have testIDs.";
+  if (issues.length === 0) {
+    return "Tap-edit hygiene: all checks passed (testIDs, data layout, no split labels).";
+  }
 
-  const textMissing = issues.filter((i) => i.kind === "text-missing-testid").length;
-  const rowMissing = issues.filter((i) => i.kind === "pressable-missing-testid").length;
+  const counts = new Map<TapEditAuditIssueKind, number>();
+  for (const issue of issues) {
+    counts.set(issue.kind, (counts.get(issue.kind) ?? 0) + 1);
+  }
+  const summary = [...counts.entries()]
+    .map(([kind, n]) => `${n} ${KIND_LABELS[kind]}`)
+    .join(", ");
 
   const lines = [
-    `Tap-to-edit audit: ${issues.length} issue(s) — ${textMissing} Text without testID, ${rowMissing} list row(s) without testID.`,
-    "Add unique kebab-case testID props so customers can tap labels and colors in the preview.",
-    "Examples: testID=\"settings-meal-reminder-label\", testID={\`meal-plan-\${id}\`} on mapped rows.",
+    `Tap-edit hygiene audit: ${issues.length} issue(s) — ${summary}.`,
+    "Fix so every tap-to-edit change saves to code (rule 7b).",
+    "- One label = one Text; editable strings in data (storage.ts, tabs arrays).",
+    "- testID on every label and mapped row; icon beside label in a row.",
+    "- No day === 'Mon' ? \"Monday\" : day hacks; no title.split() fragments.",
     "",
   ];
 
   for (const issue of issues.slice(0, maxItems)) {
-    lines.push(
-      `- ${issue.file}:${issue.line} [${issue.kind}] ${issue.snippet}`,
-    );
+    lines.push(`- ${issue.file}:${issue.line} [${issue.kind}] ${issue.snippet}`);
   }
   if (issues.length > maxItems) {
     lines.push(`... and ${issues.length - maxItems} more`);

@@ -7,6 +7,7 @@ import { env } from "./env.js";
 import { authRoutes } from "./auth.js";
 import { ideaRoutes } from "./ideas.js";
 import { projectRoutes } from "./projects.js";
+import { attachmentRoutes } from "./attachments.js";
 import { wsRoutes } from "./ws.js";
 import { startIdleSweeper } from "./orchestrator.js";
 
@@ -37,6 +38,7 @@ async function main(): Promise<void> {
   await app.register(authRoutes);
   await app.register(ideaRoutes);
   await app.register(projectRoutes);
+  await app.register(attachmentRoutes);
   await app.register(wsRoutes);
 
   await recoverStuckBuilds();

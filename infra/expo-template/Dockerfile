@@ -12,12 +12,17 @@ ENV EXPO_NO_TELEMETRY=1 \
     NPM_CONFIG_FUND=false \
     NPM_CONFIG_AUDIT=false
 
-# Build the template app at image build time so versions always resolve
-# to a coherent, current Expo SDK without hand-pinning.
+# Pin SDK 54 — matches Expo Go on the App Store / Play Store.
+# create-expo-app@latest currently scaffolds SDK 56, which store Expo Go cannot open.
 WORKDIR /template
-RUN npx --yes create-expo-app@latest . --template blank-typescript --no-install \
+RUN npx --yes create-expo-app@latest . --template blank-typescript@sdk-54 --no-install -y \
     && npm install \
-    && npx expo install react-dom react-native-web @expo/metro-runtime @react-native-async-storage/async-storage
+    && npx expo install react-dom react-native-web @expo/metro-runtime \
+        @react-native-async-storage/async-storage @expo/vector-icons expo-font \
+        @expo-google-fonts/dm-sans @expo-google-fonts/fraunces
+
+# Appable scaffold: design tokens + auth helpers (non-negotiables)
+COPY template-files/ .
 
 # Git identity for checkpoint commits made inside containers
 RUN git config --global user.email "agent@appable.dev" \

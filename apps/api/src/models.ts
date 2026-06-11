@@ -104,6 +104,11 @@ export function pickSuggestionModel(): ModelChoice {
   return { client: deepinfra, model: env.modelSuggestions };
 }
 
+/** Multimodal model for attached reference photos in build/brainstorm chat. */
+export function pickVisionModel(): ModelChoice {
+  return { client: deepinfra, model: env.modelVision };
+}
+
 export type ChatMessage = OpenAI.Chat.ChatCompletionMessageParam;
 export type ChatTool = OpenAI.Chat.ChatCompletionTool;
 

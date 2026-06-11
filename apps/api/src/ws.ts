@@ -5,8 +5,10 @@ import { parseClientMessage, serializeEvent } from "@appable/shared";
 import { getDb } from "@appable/db";
 import type { AuthUser } from "./auth.js";
 import { addSocket, removeSocket, emit } from "./events.js";
+import { encodeMessageWithAttachments } from "@appable/shared";
 import { handleChat } from "./interview.js";
 import { runBuild, runEdit, cancelBuild, isBuilding } from "./agent/loop.js";
+import { enrichWithVisionContext } from "./vision.js";
 import { restoreCheckpoint, touch } from "./orchestrator.js";
 
 /**
@@ -98,12 +100,21 @@ async function handleMessage(
   switch (msg.type) {
     case "chat.send": {
       await touch(projectId).catch(() => {});
+      const attachments = msg.attachments ?? [];
+      const storedText = encodeMessageWithAttachments(msg.text, attachments);
+      const agentText =
+        attachments.length > 0
+          ? await enrichWithVisionContext(projectId, msg.text, attachments)
+          : msg.text;
       if (msg.conversation === "build") {
         // Edit mode: change requests against the already-built app.
         // Long-running; progress streams via agent.status / build.event.
-        void runEdit(projectId, msg.text);
+        void runEdit(projectId, { agentText, storedText });
       } else {
-        await handleChat(projectId, msg.conversation, msg.text);
+        await handleChat(projectId, msg.conversation, {
+          agentText,
+          storedText,
+        });
       }
       break;
     }

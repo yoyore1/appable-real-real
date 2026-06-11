@@ -18,6 +18,11 @@ export interface AppSpec {
   screens: ScreenSpec[];
   dataModel: EntitySpec[];
   features: string[];
+  /**
+   * Distinct user types when the app is two-sided (e.g. "Dog owner", "Dog walker").
+   * Empty or omitted = single audience → no role picker.
+   */
+  audienceRoles?: string[];
   /** Things the user explicitly said they do NOT want. */
   nonGoals: string[];
   /** Auto-generated legal/support documents (filled in by the platform). */

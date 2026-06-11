@@ -21,4 +21,4 @@ echo "[appable] starting expo dev server on port ${PORT}..."
 # NOTE: do NOT set CI=1 here - CI mode disables Metro's file watcher, which
 # kills hot reload and hides agent-written files from the bundler. The
 # container has no TTY, so the Expo CLI is already non-interactive.
-exec npx expo start --port "${PORT}"
+exec npx expo start --port "${PORT}" --host lan

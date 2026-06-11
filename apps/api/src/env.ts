@@ -15,7 +15,9 @@ config();
  */
 function detectLanIp(): string | null {
   const candidates: string[] = [];
-  for (const ifaces of Object.values(os.networkInterfaces())) {
+  const skipName = /nordlynx|wireguard|tun|tap|vpn|wsl|hyper-v|vethernet|docker|vmware|virtualbox/i;
+  for (const [name, ifaces] of Object.entries(os.networkInterfaces())) {
+    if (skipName.test(name)) continue;
     for (const iface of ifaces ?? []) {
       if (iface.family === "IPv4" && !iface.internal) {
         candidates.push(iface.address);
@@ -72,6 +74,10 @@ export const env = {
   modelSuggestions: req("MODEL_SUGGESTIONS", "Qwen/Qwen2.5-72B-Instruct"),
   /** Edits run on Fireworks for speed; falls back to MODEL_BUILD on DeepInfra if unset. */
   modelEdit: process.env.MODEL_EDIT ?? "accounts/fireworks/models/minimax-m2p7",
+  /** Vision model for attached reference photos (DeepInfra; edit model is text-only). */
+  modelVision: req("MODEL_VISION", "Qwen/Qwen2.5-VL-7B-Instruct"),
+  /** On-disk storage for chat photo uploads. */
+  chatUploadsDir: req("CHAT_UPLOADS_DIR", "./data/chat-uploads"),
   /** Stronger model used when BUILD_ROUTING=mixed and heal round >= 2. */
   modelBuildEscalate: process.env.MODEL_BUILD_ESCALATE ?? "accounts/fireworks/models/kimi-k2p6",
   /** single = one model always; mixed = escalate on heal round 2+. */

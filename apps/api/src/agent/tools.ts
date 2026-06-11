@@ -1,12 +1,18 @@
 import type { ChatTool } from "../models.js";
 import {
+  assertAgentCommandAllowed,
+  assertAgentDeleteAllowed,
+  assertAgentWriteAllowed,
+} from "../platformGlue.js";
+import {
+  repairPlatformGlue,
+  writeProjectFile,
   deleteProjectFile,
   execInProject,
   getProjectLogs,
   listProjectFiles,
   readProjectFile,
   verifyApp,
-  writeProjectFile,
 } from "../orchestrator.js";
 import { emit } from "../events.js";
 
@@ -37,7 +43,8 @@ export const agentTools: ChatTool[] = [
     type: "function",
     function: {
       name: "write_file",
-      description: "Create or overwrite a file in the project with complete content.",
+      description:
+        "Create or overwrite a file in the project with complete content. Cannot write appable-bridge.js or metro.config.* (platform-owned).",
       parameters: {
         type: "object",
         properties: {
@@ -112,12 +119,19 @@ export async function executeTool(
     }
     case "write_file": {
       const path = String(args.path);
-      await writeProjectFile(projectId, path, String(args.content));
+      const guard = assertAgentWriteAllowed(path, String(args.content));
+      if (!guard.ok) return guard.message;
+      await writeProjectFile(projectId, path, guard.content);
+      if (path.replace(/\\/g, "/").replace(/^\/+/, "").endsWith("index.ts")) {
+        await repairPlatformGlue(projectId);
+      }
       emit(projectId, { type: "file.op", op: "write", path });
       return `Wrote ${path}`;
     }
     case "delete_file": {
       const path = String(args.path);
+      const guard = assertAgentDeleteAllowed(path);
+      if (!guard.ok) return guard.message;
       await deleteProjectFile(projectId, path);
       emit(projectId, { type: "file.op", op: "delete", path });
       return `Deleted ${path}`;
@@ -127,6 +141,8 @@ export async function executeTool(
       if (/\bexpo\s+start\b/i.test(command)) {
         return "Metro is already running. Do not start expo again — use read_build_logs, read_file, and write_file.";
       }
+      const cmdGuard = assertAgentCommandAllowed(command);
+      if (!cmdGuard.ok) return cmdGuard.message;
       const result = await execInProject(projectId, ["sh", "-c", command], {
         timeoutMs: 60_000,
       });

@@ -15,6 +15,20 @@ import {
 import { MicButton } from "../components/MicButton.js";
 import { HoverTip } from "../components/HoverTip.js";
 import { SidePanel } from "../components/SidePanel.js";
+import {
+  ChatAttachButton,
+  type PendingAttachment,
+} from "../components/ChatAttachButton.js";
+import { ChatAttachmentThumb } from "../components/ChatAttachmentThumb.js";
+import { parseChatMessage, uploadChatAttachment } from "../chatAttachments.js";
+import {
+  TAP_FONT_CSS,
+  TAP_FONT_OPTIONS,
+  fontPresetFromComputed,
+  fontPresetLabel,
+  isBoldWeight,
+  type TapFontPreset,
+} from "../tapEditStyle.js";
 
 interface ProjectDetail {
   id: string;
@@ -52,6 +66,8 @@ interface TappedElement {
   color: string;
   backgroundColor: string;
   fontSize: string;
+  fontWeight: string;
+  fontFamily: string;
 }
 
 function shortTapLabel(text: string | undefined): string {
@@ -83,6 +99,9 @@ export function Build({
   const s = useProjectSocket(projectId);
   const [tab, setTab] = useState<"build" | "brainstorm">("build");
   const [input, setInput] = useState("");
+  const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
+  const [attachUploading, setAttachUploading] = useState(false);
+  const [attachError, setAttachError] = useState<string | null>(null);
   const [project, setProject] = useState<ProjectDetail | null>(null);
   const [starting, setStarting] = useState(false);
   const startedBuild = useRef(false);
@@ -101,15 +120,56 @@ export function Build({
   const [partIsIcon, setPartIsIcon] = useState<boolean[]>([]);
   const [draftColor, setDraftColor] = useState("#000000");
   const [draftBg, setDraftBg] = useState("#ffffff");
+  const [draftBold, setDraftBold] = useState(false);
+  const [originalBold, setOriginalBold] = useState(false);
+  const [draftFont, setDraftFont] = useState<TapFontPreset>("sans");
+  const [originalFont, setOriginalFont] = useState<TapFontPreset>("sans");
+  const [pendingEditNotice, setPendingEditNotice] = useState(false);
 
   function postToPreview(msg: object) {
     iframeRef.current?.contentWindow?.postMessage(msg, "*");
   }
 
-  function setEditMode(on: boolean) {
-    setEditOn(on);
+  function hasPendingTapEdits(): boolean {
+    if (!tapped) return false;
+    for (let i = 0; i < draftTexts.length; i++) {
+      if ((draftTexts[i] ?? "") !== (originalTexts[i] ?? "")) return true;
+    }
+    if (draftColor !== rgbToHex(tapped.color)) return true;
+    const origBg = isTransparent(tapped.backgroundColor)
+      ? "#ffffff"
+      : rgbToHex(tapped.backgroundColor);
+    if (draftBg !== origBg) return true;
+    if (draftBold !== originalBold) return true;
+    if (draftFont !== originalFont) return true;
+    return false;
+  }
+
+  function exitEditMode(revertPreview: boolean) {
+    setPendingEditNotice(false);
+    setEditOn(false);
     setTapped(null);
-    postToPreview({ type: "appable:edit-mode", on });
+    setPartIsIcon([]);
+    if (revertPreview) postToPreview({ type: "appable:clear" });
+    postToPreview({ type: "appable:edit-mode", on: false });
+  }
+
+  function requestExitEditMode() {
+    if (hasPendingTapEdits()) {
+      setPendingEditNotice(true);
+      return;
+    }
+    exitEditMode(Boolean(tapped));
+  }
+
+  function setEditMode(on: boolean) {
+    if (!on) {
+      requestExitEditMode();
+      return;
+    }
+    setPendingEditNotice(false);
+    setEditOn(true);
+    postToPreview({ type: "appable:edit-mode", on: true });
   }
 
   // Receive taps from the bridge inside the iframe.
@@ -123,6 +183,7 @@ export function Build({
             : msg.el.text
               ? [msg.el.text]
               : [];
+        setPendingEditNotice(false);
         setTapped(msg.el);
         setDraftTexts(parts);
         setOriginalTexts(parts);
@@ -131,6 +192,12 @@ export function Build({
         );
         setDraftColor(rgbToHex(msg.el.color));
         setDraftBg(isTransparent(msg.el.backgroundColor) ? "#ffffff" : rgbToHex(msg.el.backgroundColor));
+        const bold = isBoldWeight(msg.el.fontWeight ?? "400");
+        setDraftBold(bold);
+        setOriginalBold(bold);
+        const font = fontPresetFromComputed(msg.el.fontFamily ?? "");
+        setDraftFont(font);
+        setOriginalFont(font);
       }
     }
     window.addEventListener("message", onMessage);
@@ -180,6 +247,26 @@ export function Build({
           : `set the background color to ${draftBg}`,
       );
     }
+    if (draftBold !== originalBold) {
+      const weight = draftBold ? "700" : "400";
+      postToPreview({ type: "appable:apply", prop: "fontWeight", value: weight });
+      const weightWord = draftBold ? "bold" : "normal";
+      changes.push(
+        label
+          ? `set the font weight of "${label}" to ${weightWord}`
+          : `set the font weight to ${weightWord}`,
+      );
+    }
+    if (draftFont !== originalFont) {
+      const cssFont = TAP_FONT_CSS[draftFont];
+      postToPreview({ type: "appable:apply", prop: "fontFamily", value: cssFont });
+      const fontLabel = fontPresetLabel(draftFont);
+      changes.push(
+        label
+          ? `set the font family of "${label}" to ${fontLabel}`
+          : `set the font family to ${fontLabel}`,
+      );
+    }
     if (changes.length === 0) {
       closeTapPanel();
       return;
@@ -188,10 +275,11 @@ export function Build({
     const hasBg = draftBg !== origBg;
     const hasColor = draftColor !== rgbToHex(tapped.color);
     const hasText = partUpdates.length > 0;
+    const hasFont = draftBold !== originalBold || draftFont !== originalFont;
     const target =
       hasText && tapped.textTestId
         ? `the element with testID "${tapped.textTestId}"`
-        : hasColor && !hasBg && tapped.textTestId
+        : (hasColor || hasFont) && !hasBg && tapped.textTestId
           ? `the element with testID "${tapped.textTestId}"`
           : hasColor && hasBg && tapped.boxTestId
             ? `the element with testID "${tapped.boxTestId}"`
@@ -201,17 +289,22 @@ export function Build({
                 ? `the element with testID "${tapped.boxTestId}"`
                 : hasBg && tapped.textTestId
                   ? `the element with testID "${tapped.textTestId}"`
-                  : hasBg && label
-                    ? `the card container for "${label}"`
-                    : tapped.textTestId
-                      ? `the element with testID "${tapped.textTestId}"`
-                      : label
-                        ? `the ${tapped.tag} element showing "${label}"`
-                        : `the ${tapped.tag} element`;
+                  : hasFont && tapped.textTestId
+                    ? `the element with testID "${tapped.textTestId}"`
+                    : hasBg && label
+                      ? `the card container for "${label}"`
+                      : tapped.textTestId
+                        ? `the element with testID "${tapped.textTestId}"`
+                        : label
+                          ? `the ${tapped.tag} element showing "${label}"`
+                          : `the ${tapped.tag} element`;
     const message = `[Tap edit] In the app, find ${target} and ${changes.join("; ")}. Change only what was tapped.`;
 
     s.appendLocal("build", friendlyTapEditMessage(changes));
     s.send({ type: "chat.send", conversation: "build", text: message });
+    setOriginalBold(draftBold);
+    setOriginalFont(draftFont);
+    setPendingEditNotice(false);
     hideTapPanel();
     window.setTimeout(() => postToPreview({ type: "appable:clear-outline" }), 50);
   }
@@ -221,12 +314,23 @@ export function Build({
     postToPreview({ type: "appable:apply-parts", parts: [{ index, value }] });
   }
 
+  function updateDraftBold(bold: boolean) {
+    setDraftBold(bold);
+    postToPreview({ type: "appable:apply", prop: "fontWeight", value: bold ? "700" : "400" });
+  }
+
+  function updateDraftFont(preset: TapFontPreset) {
+    setDraftFont(preset);
+    postToPreview({ type: "appable:apply", prop: "fontFamily", value: TAP_FONT_CSS[preset] });
+  }
+
   function hideTapPanel() {
     setTapped(null);
     setPartIsIcon([]);
   }
 
   function closeTapPanel() {
+    setPendingEditNotice(false);
     hideTapPanel();
     postToPreview({ type: "appable:clear" });
   }
@@ -240,16 +344,19 @@ export function Build({
       api<DbMessage[]>(`/projects/${projectId}/messages?kind=${kind}`).then((msgs) =>
         s.seed(
           kind,
-          msgs.map(
-            (m): ChatItem => ({
+          msgs.map((m): ChatItem => {
+            const parsed = parseChatMessage(m.content);
+            const displayText =
+              kind === "build" && m.role === "user"
+                ? formatBuildChatDisplay(parsed.text)
+                : parsed.text;
+            return {
               id: m.id,
               role: m.role === "user" ? "user" : "assistant",
-              text:
-                kind === "build" && m.role === "user"
-                  ? formatBuildChatDisplay(m.content)
-                  : m.content,
-            }),
-          ),
+              text: displayText,
+              ...(parsed.attachments.length ? { attachments: parsed.attachments } : {}),
+            };
+          }),
         ),
       );
     }
@@ -273,7 +380,9 @@ export function Build({
     baseWebUrl && previewNonce > 0
       ? `${baseWebUrl}${baseWebUrl.includes("?") ? "&" : "?"}_r=${previewNonce}`
       : baseWebUrl;
-  const expUrl = preview?.expUrl ?? project?.preview?.expUrl ?? null;
+  /** QR only when Metro confirmed live via websocket — never a stale cached URL. */
+  const expUrl = preview?.expUrl ?? null;
+  const previewStarting = starting || s.preview?.status === "starting";
   const building = status === "building";
   /** Only show the live preview once the initial build finished — not the empty Expo template mid-build. */
   const showPreview =
@@ -336,20 +445,66 @@ export function Build({
   const agentBusy =
     s.agentStatus && !["idle", "done", "failed"].includes(s.agentStatus.status);
 
+  async function addAttachments(files: File[]) {
+    if (!files.length) return;
+    setAttachError(null);
+    setAttachUploading(true);
+    try {
+      for (const file of files) {
+        const uploaded = await uploadChatAttachment(projectId, file);
+        const previewUrl = URL.createObjectURL(file);
+        setPendingAttachments((prev) => [
+          ...prev,
+          { ...uploaded, previewUrl },
+        ]);
+      }
+    } catch (err) {
+      setAttachError(err instanceof Error ? err.message : "Upload failed");
+    } finally {
+      setAttachUploading(false);
+    }
+  }
+
+  function removePendingAttachment(id: string) {
+    setPendingAttachments((prev) => {
+      const hit = prev.find((a) => a.id === id);
+      if (hit) URL.revokeObjectURL(hit.previewUrl);
+      return prev.filter((a) => a.id !== id);
+    });
+  }
+
   function sendChat() {
     const text = input.trim();
-    if (!text) return;
+    if ((!text && pendingAttachments.length === 0) || attachUploading) return;
     const conversation = tab === "brainstorm" ? ("brainstorm" as const) : ("build" as const);
-    s.appendLocal(conversation, text);
-    s.send({ type: "chat.send", conversation, text });
+    const messageText = text || "See attached image";
+    const attachments = pendingAttachments.map(({ id, name, mime, url }) => ({
+      id,
+      name,
+      mime,
+      url,
+    }));
+    s.appendLocal(
+      conversation,
+      messageText,
+      attachments.length ? attachments : undefined,
+    );
+    s.send({
+      type: "chat.send",
+      conversation,
+      text: messageText,
+      ...(attachments.length ? { attachments } : {}),
+    });
     setInput("");
+    for (const a of pendingAttachments) URL.revokeObjectURL(a.previewUrl);
+    setPendingAttachments([]);
+    setAttachError(null);
   }
 
   async function undo() {
     if (undoBusy || !canUndo || agentBusy || building) return;
     setUndoBusy(true);
-    setEditMode(false);
-    postToPreview({ type: "appable:clear" });
+    exitEditMode(true);
     try {
       const res = await api<{ ok: boolean; canUndo: boolean }>(`/projects/${projectId}/undo`, {
         method: "POST",
@@ -387,7 +542,7 @@ export function Build({
         </span>
       </header>
 
-      <div className="build-cols">
+      <div className={tapped ? "build-cols build-cols-tap-edit" : "build-cols"}>
         {/* ---------- left: brainstorm / build ---------- */}
         <section className="bcol bcol-left">
           <div className="seg">
@@ -414,44 +569,74 @@ export function Build({
           ) : (
             <ChatPane
               items={s.brainstorm}
-              empty="Think out loud about your app here. Features, names, what to add next."
+              empty="Ask about your app — what's missing, what to prioritize, ideas for v2. I already know your plan and what's built."
             />
           )}
 
-          <div className="chat-inputbar" style={{ marginTop: 10 }}>
-            <input
-              value={input}
-              placeholder={
-                tab === "brainstorm"
-                  ? "Ask anything about your app"
-                  : building
-                    ? "Still building, one moment"
-                    : "Describe a change"
-              }
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && sendChat()}
-              disabled={tab === "build" && building}
-            />
-            <MicButton
-              className="icon-btn chat-mic"
-              tip="Describe a change out loud — we'll make it."
-              disabled={tab === "build" && building}
-              onTranscript={(chunk) =>
-                setInput((prev) => (prev ? `${prev.trim()} ${chunk}` : chunk))
-              }
-            />
-            <button
-              className="send-btn"
-              onClick={sendChat}
-              disabled={!input.trim() || (tab === "build" && building)}
-            >
-              <SendIcon />
-            </button>
+          <div className="chat-compose" style={{ marginTop: 10 }}>
+            {attachError && <p className="chat-attach-error muted small">{attachError}</p>}
+            {pendingAttachments.length > 0 && (
+              <div className="chat-pending-attachments">
+                {pendingAttachments.map((att) => (
+                  <figure key={att.id} className="chat-pending-attach">
+                    <img src={att.previewUrl} alt={att.name} title={att.name} />
+                    <button
+                      type="button"
+                      className="chat-pending-remove"
+                      aria-label={`Remove ${att.name}`}
+                      onClick={() => removePendingAttachment(att.id)}
+                    >
+                      ×
+                    </button>
+                  </figure>
+                ))}
+              </div>
+            )}
+            <div className="chat-inputbar">
+              <ChatAttachButton
+                disabled={(tab === "build" && building) || attachUploading}
+                count={pendingAttachments.length}
+                onPick={(files) => void addAttachments(files)}
+                onError={setAttachError}
+              />
+              <input
+                value={input}
+                placeholder={
+                  tab === "brainstorm"
+                    ? "Ask anything about your app"
+                    : building
+                      ? "Still building, one moment"
+                      : "Describe a change"
+                }
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && sendChat()}
+                disabled={tab === "build" && building}
+              />
+              <MicButton
+                className="icon-btn chat-mic"
+                tip="Describe a change out loud — we'll make it."
+                disabled={tab === "build" && building}
+                onTranscript={(chunk) =>
+                  setInput((prev) => (prev ? `${prev.trim()} ${chunk}` : chunk))
+                }
+              />
+              <button
+                className="send-btn"
+                onClick={sendChat}
+                disabled={
+                  attachUploading ||
+                  (!input.trim() && pendingAttachments.length === 0) ||
+                  (tab === "build" && building)
+                }
+              >
+                <SendIcon />
+              </button>
+            </div>
           </div>
         </section>
 
         {/* ---------- middle: phone ---------- */}
-        <section className="bcol bcol-mid">
+        <section className={tapped ? "bcol bcol-mid bcol-mid-tap-edit" : "bcol bcol-mid"}>
           <div className="phone-toolbar">
             <div className="phone-toolbar-main">
               <div className={s.agentStatus?.status === "done" ? "agent-line done" : "agent-line"}>
@@ -498,7 +683,7 @@ export function Build({
                 >
                   <button
                     className={editOn ? "btn btn-primary edit-toggle" : "btn btn-ghost edit-toggle"}
-                    onClick={() => setEditMode(!editOn)}
+                    onClick={() => (editOn ? requestExitEditMode() : setEditMode(true))}
                   >
                     {editOn ? "Done editing" : "Tap to edit"}
                   </button>
@@ -506,10 +691,30 @@ export function Build({
               </div>
             )}
           </div>
-          {editOn && !tapped && (
+          {pendingEditNotice && (
+            <div className="edit-pending-notice" role="alert">
+              <p>
+                You have unsaved changes in the editor. Press <b>Apply change</b> to save them,
+                or <b>Cancel</b> on the panel to discard.
+              </p>
+              <div className="edit-pending-notice-actions">
+                <button className="btn btn-ghost" type="button" onClick={() => setPendingEditNotice(false)}>
+                  Keep editing
+                </button>
+                <button
+                  className="btn btn-ghost"
+                  type="button"
+                  onClick={() => exitEditMode(true)}
+                >
+                  Leave without saving
+                </button>
+              </div>
+            </div>
+          )}
+          {editOn && !tapped && !pendingEditNotice && (
             <p className="muted small edit-hint">Tap anything in your app to change it.</p>
           )}
-          <div className="phone-stage">
+          <div className={tapped ? "phone-stage phone-stage-editing" : "phone-stage"}>
           {tapped && (
             <div className="edit-panel">
               <div className="edit-panel-head">
@@ -538,6 +743,40 @@ export function Build({
                   />
                 </label>
               ))}
+              <div className="edit-font-row">
+                <label className="edit-field">
+                  <span>Font</span>
+                  <select
+                    value={draftFont}
+                    onChange={(e) => updateDraftFont(e.target.value as TapFontPreset)}
+                  >
+                    {TAP_FONT_OPTIONS.map((opt) => (
+                      <option key={opt.id} value={opt.id}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div className="edit-field">
+                  <span>Weight</span>
+                  <div className="edit-bold-toggle">
+                    <button
+                      type="button"
+                      className={draftBold ? "on" : ""}
+                      onClick={() => updateDraftBold(true)}
+                    >
+                      Bold
+                    </button>
+                    <button
+                      type="button"
+                      className={!draftBold ? "on" : ""}
+                      onClick={() => updateDraftBold(false)}
+                    >
+                      Normal
+                    </button>
+                  </div>
+                </div>
+              </div>
               <div className="edit-colors">
                 <label className="edit-field">
                   <span>Text color</span>
@@ -647,7 +886,7 @@ export function Build({
           <SidePanel
             title="On your phone"
             autoOpenWhen={Boolean(expUrl && showPreview)}
-            badge={expUrl && showPreview ? "Ready" : undefined}
+            badge={expUrl && showPreview ? "Ready" : previewStarting ? "Starting…" : undefined}
           >
             {expUrl && showPreview ? (
               <div className="expo-panel">
@@ -669,13 +908,21 @@ export function Build({
                   </li>
                 </ol>
                 <p className="expo-footnote muted small">
+                  Phone must be on the <b>same Wi‑Fi</b> as this computer. If Expo Go times out,
+                  open this page first (wakes Metro), wait for Ready, then scan again.
+                </p>
+                <p className="expo-footnote muted small">
                   Or paste this link in Expo Go if scanning is tricky
                 </p>
                 <code className="exp-url">{expUrl}</code>
               </div>
+            ) : previewStarting && showPreview ? (
+              <p className="muted small side-panel-empty">
+                Starting Metro for your phone… about 10–20 seconds, then the QR appears.
+              </p>
             ) : (
               <p className="muted small side-panel-empty">
-                Your QR code shows up here once the build finishes.
+                Your QR code shows up here once the build finishes and Metro is running.
               </p>
             )}
           </SidePanel>
@@ -751,6 +998,13 @@ function ChatPane({ items, empty }: { items: ChatItem[]; empty: string }) {
       {items.length === 0 && <p className="muted small">{empty}</p>}
       {items.map((m) => (
         <div key={m.id} className={`imsg ${m.role === "user" ? "me" : "them"}`}>
+          {m.attachments && m.attachments.length > 0 && (
+            <div className="chat-msg-attachments">
+              {m.attachments.map((att) => (
+                <ChatAttachmentThumb key={att.id} attachment={att} />
+              ))}
+            </div>
+          )}
           {(m.role === "user" ? formatBuildChatDisplay(m.text) : m.text).trim()}
           {m.streaming ? "▌" : ""}
         </div>

@@ -59,7 +59,49 @@ const cases = [
   },
 ];
 
+const storageSample = `const defaultData = {
+  recipes: [
+    { id: '2', title: 'Chicken Stir Fry', ingredients: [], image: '🍗', isFavorite: false },
+  ],
+};`;
+
+const tabBarSample = `const tabs = [
+  { id: 'home', label: 'Home', icon: '🏠' },
+];
+export function TabBar() {
+  return tabs.map((tab) => (
+    <TouchableOpacity key={tab.id} testID={\`tab-\${tab.id}\`}>
+      <Text>{tab.label}</Text>
+    </TouchableOpacity>
+  ));
+}`;
+
+const dataCases = [
+  {
+    name: "recipe title via storage.ts + recipe-title-2",
+    file: storageSample,
+    msg: '[Tap edit] In the app, find the element with testID "recipe-title-2" and replace the text "Chicken Stir Fry" with "Chicken Stir ". Change only what was tapped.',
+    ok: (f) => f.includes("title: 'Chicken Stir '"),
+  },
+  {
+    name: "tab label via tabs array + tab-home",
+    file: tabBarSample,
+    msg: '[Tap edit] In the app, find the element with testID "tab-home" and replace the text "Home" with "Ho". Change only what was tapped.',
+    ok: (f) => f.includes("label: 'Ho'"),
+  },
+];
+
 let failed = 0;
+for (const c of dataCases) {
+  const out = applyTapEditToSource(c.file, c.msg);
+  const pass = out && c.ok(out);
+  console.log(pass ? "PASS" : "FAIL", c.name);
+  if (!pass) {
+    failed++;
+    console.log(out?.slice(0, 500) ?? "null");
+  }
+}
+
 for (const c of cases) {
   const out = applyTapEditToSource(sample, c.msg);
   const pass = out && c.ok(out);

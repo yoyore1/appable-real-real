@@ -26,9 +26,10 @@ import {
   buildSystemPrompt,
   editSystemPrompt,
   healSystemPrompt,
-  tapEditHealSystemPrompt,
 } from "./prompts.js";
-import { auditTapEditReadiness, formatTapEditAuditReport } from "./tapEditAudit.js";
+import { scheduleBrainstormSnapshotRefresh } from "../brainstormSnapshot.js";
+import { runDesignPolishPass } from "./designPolish.js";
+import { runTapEditHygienePass } from "./tapEditHygiene.js";
 import { tryTapEditPatch } from "./tapEdit.js";
 import { agentTools, executeTool } from "./tools.js";
 
@@ -70,6 +71,46 @@ function status(
   message: string,
 ): void {
   emit(projectId, { type: "agent.status", status: s, message });
+}
+
+/** Post-build design + non-negotiables polish. */
+async function runDesignPass(
+  projectId: string,
+  spec: AppSpec,
+  state: { cancelled: boolean },
+): Promise<string | null> {
+  const result = await runDesignPolishPass({
+    projectId,
+    spec,
+    pickModel: (round) => pickAgentModel("build", round),
+    runAgent: (choice, messages, doneMarker) =>
+      agentLoop(projectId, choice, messages, HEAL_ITERATIONS, state, doneMarker),
+    log: (level, text) => logBuild(projectId, level, "system", text),
+    status: (s, message) =>
+      status(projectId, s === "checking" ? "checking" : "fixing", message),
+  });
+  return result.verifyError;
+}
+
+/** Scan whole app for tap-to-edit anti-patterns; one agent fix round. */
+async function runHygienePass(
+  projectId: string,
+  spec: AppSpec,
+  state: { cancelled: boolean },
+  phase: "build" | "edit",
+): Promise<string | null> {
+  const result = await runTapEditHygienePass({
+    projectId,
+    spec,
+    phase,
+    pickModel: (round) => pickAgentModel(phase, round),
+    runAgent: (choice, messages, doneMarker) =>
+      agentLoop(projectId, choice, messages, HEAL_ITERATIONS, state, doneMarker),
+    log: (level, text) => logBuild(projectId, level, "system", text),
+    status: (s, message) =>
+      status(projectId, s === "checking" ? "checking" : "fixing", message),
+  });
+  return result.verifyError;
 }
 
 /**
@@ -184,49 +225,13 @@ export async function runBuild(projectId: string): Promise<void> {
       }
     }
 
-    // Post-build: every label needs testID so tap-to-edit saves to code.
-    let tapEditIssues = await auditTapEditReadiness(projectId);
-    if (tapEditIssues.length > 0) {
-      status(projectId, "fixing", "Making labels editable by tap...");
-      await logBuild(
-        projectId,
-        "info",
-        "system",
-        formatTapEditAuditReport(tapEditIssues),
-      );
-      const tapHealMessages: ChatMessage[] = [
-        { role: "system", content: tapEditHealSystemPrompt(spec) },
-        {
-          role: "user",
-          content: `Fix every item below. Add testID only — no other changes.\n\n${formatTapEditAuditReport(tapEditIssues)}`,
-        },
-      ];
-      const tapHealChoice = pickAgentModel("build", 1);
-      await agentLoop(
-        projectId,
-        tapHealChoice,
-        tapHealMessages,
-        HEAL_ITERATIONS,
-        state,
-        "FIX COMPLETE",
-      );
-      const recheck = await auditTapEditReadiness(projectId);
-      if (recheck.length > 0) {
-        await logBuild(
-          projectId,
-          "warn",
-          "system",
-          `Tap-edit audit: ${recheck.length} item(s) still missing testID after heal pass.`,
-        );
-      } else {
-        await logBuild(projectId, "info", "system", "Tap-edit audit: all labels have testIDs.");
-      }
-      const postTapVerify = await verifyApp(projectId);
-      if (postTapVerify) {
-        await logBuild(projectId, "warn", "system", `Post tap-edit verify: ${postTapVerify}`);
-      }
-      tapEditIssues = recheck;
+    // Post-build: Rule 7 design polish first, then Rule 7b tap-to-edit hygiene (hard gate last).
+    const polishError = await runDesignPass(projectId, spec, state);
+    if (polishError) {
+      await logBuild(projectId, "warn", "system", `Design polish verify: ${polishError}`);
     }
+
+    await runHygienePass(projectId, spec, state, "build");
 
     status(projectId, "checking", "Saving your progress...");
     await createCheckpoint(projectId, "build").catch((err) =>
@@ -237,6 +242,7 @@ export async function runBuild(projectId: string): Promise<void> {
     emit(projectId, { type: "project.status", status: "running" });
     status(projectId, "done", "Your app is ready!");
     await logBuild(projectId, "info", "system", "Build finished.");
+    scheduleBrainstormSnapshotRefresh(projectId);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await logBuild(projectId, "error", "system", `Build failed: ${message}`);
@@ -256,7 +262,13 @@ const EDIT_ITERATIONS = 30;
  * Pipeline: checkpoint -> surgical agent edit -> bundle verify ->
  * checkpoint on success / hard rollback on failure.
  */
-export async function runEdit(projectId: string, request: string): Promise<void> {
+export async function runEdit(
+  projectId: string,
+  input: string | { agentText: string; storedText?: string },
+): Promise<void> {
+  const agentText = typeof input === "string" ? input : input.agentText;
+  const storedText = typeof input === "string" ? input : (input.storedText ?? input.agentText);
+  const request = agentText;
   if (activeBuilds.has(projectId)) {
     emit(projectId, {
       type: "error",
@@ -275,7 +287,7 @@ export async function runEdit(projectId: string, request: string): Promise<void>
     update: {},
   });
   await db.message.create({
-    data: { conversationId: conversation.id, role: "user", content: request },
+    data: { conversationId: conversation.id, role: "user", content: storedText },
   });
 
   let safeRef: string | null = null;
@@ -309,6 +321,18 @@ export async function runEdit(projectId: string, request: string): Promise<void>
           status(projectId, "idle", "Change rolled back - your app is untouched.");
           return;
         }
+        const hygieneError = await runHygienePass(projectId, spec, state, "edit");
+        if (hygieneError) {
+          await resetToGitRef(projectId, safeRef);
+          await sendEditReply(
+            projectId,
+            conversation.id,
+            "I couldn't apply that change without breaking your app, so I left everything as it was.",
+            "tap-edit",
+          );
+          status(projectId, "idle", "Change rolled back - your app is untouched.");
+          return;
+        }
         const checkpointId = await createCheckpoint(projectId, `edit: ${request.slice(0, 60)}`).catch(
           (err) => {
             void logBuild(
@@ -328,10 +352,12 @@ export async function runEdit(projectId: string, request: string): Promise<void>
             "tap-edit",
           );
           status(projectId, "done", "Change saved (no undo point).");
+          scheduleBrainstormSnapshotRefresh(projectId);
           return;
         }
         await sendEditReply(projectId, conversation.id, tapPatch.summary, "tap-edit");
         status(projectId, "done", "Change saved.");
+        scheduleBrainstormSnapshotRefresh(projectId);
         return;
       }
 
@@ -388,6 +414,19 @@ export async function runEdit(projectId: string, request: string): Promise<void>
       return;
     }
 
+    const hygieneError = await runHygienePass(projectId, spec, state, "edit");
+    if (hygieneError) {
+      await resetToGitRef(projectId, safeRef);
+      await sendEditReply(
+        projectId,
+        conversation.id,
+        "I couldn't make that change without breaking your app, so I left everything as it was. Try describing it a bit differently.",
+        choice.model,
+      );
+      status(projectId, "idle", "Change rolled back - your app is untouched.");
+      return;
+    }
+
     await createCheckpoint(projectId, `edit: ${request.slice(0, 60)}`).catch(() => {});
 
     // Extract the friendly summary from the agent's final message.
@@ -404,6 +443,7 @@ export async function runEdit(projectId: string, request: string): Promise<void>
 
     await sendEditReply(projectId, conversation.id, summary || "Done - your change is in!", choice.model);
     status(projectId, "done", "Change saved.");
+    scheduleBrainstormSnapshotRefresh(projectId);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await logBuild(projectId, "error", "system", `Edit failed: ${message}`);

@@ -1,10 +1,10 @@
 import { emit } from "../events.js";
 import { listProjectFiles, readProjectFile, writeProjectFile } from "../orchestrator.js";
 
-type StyleProp = "color" | "backgroundColor";
+type StyleProp = "color" | "backgroundColor" | "fontWeight" | "fontFamily";
 
 export interface TapEditChange {
-  type: "text" | "color" | "background" | "removeIcon";
+  type: "text" | "color" | "background" | "fontWeight" | "fontFamily" | "removeIcon";
   value: string;
   /** Original text for scoped replacements inside a container. */
   oldValue?: string;
@@ -85,6 +85,40 @@ export function parseTapEditRequest(request: string): TapEditRequest | null {
     const bg = part.match(/^set the background color to (#[0-9A-Fa-f]{3,8})$/);
     if (bg) {
       changes.push({ type: "background", value: bg[1] });
+      continue;
+    }
+    const fwScoped = part.match(/^set the font weight of "(.+)" to (bold|normal)$/u);
+    if (fwScoped) {
+      changes.push({
+        type: "fontWeight",
+        value: fwScoped[2] === "bold" ? "700" : "400",
+        anchorText: fwScoped[1],
+      });
+      continue;
+    }
+    const fw = part.match(/^set the font weight to (bold|normal)$/u);
+    if (fw) {
+      changes.push({
+        type: "fontWeight",
+        value: fw[1] === "bold" ? "700" : "400",
+      });
+      continue;
+    }
+    const ffScoped = part.match(/^set the font family of "(.+)" to (.+)$/u);
+    if (ffScoped) {
+      changes.push({
+        type: "fontFamily",
+        value: normalizeTapFontFamily(ffScoped[2]),
+        anchorText: ffScoped[1],
+      });
+      continue;
+    }
+    const ff = part.match(/^set the font family to (.+)$/u);
+    if (ff) {
+      changes.push({
+        type: "fontFamily",
+        value: normalizeTapFontFamily(ff[1]),
+      });
     }
   }
 
@@ -107,6 +141,8 @@ export async function tryTapEditPatch(
     (c) =>
       c.type === "color" ||
       c.type === "background" ||
+      c.type === "fontWeight" ||
+      c.type === "fontFamily" ||
       c.type === "removeIcon" ||
       (c.type === "text" && c.oldValue),
   );
@@ -123,7 +159,7 @@ export async function tryTapEditPatch(
 
   let candidates = await findCandidateFiles(projectId, parsed.testId, parsed.changes);
   if (candidates.length === 0 && hasTextReplace) {
-    candidates = await allTsxFiles(projectId);
+    candidates = await allEditableSourceFiles(projectId);
   }
 
   const tried = new Set<string>();
@@ -140,7 +176,7 @@ export async function tryTapEditPatch(
 
   // Last resort: only when we have no testID — never global-replace with a scoped tap.
   if (hasTextReplace && !effectiveTestId) {
-    for (const file of await allTsxFiles(projectId)) {
+    for (const file of await allEditableSourceFiles(projectId)) {
       if (tried.has(file)) continue;
       const content = await readProjectFile(projectId, file);
       const updated = patchTapEditInFile(content, "", parsed.changes);
@@ -157,6 +193,7 @@ export async function tryTapEditPatch(
     level: "warn",
     source: "system",
     text: `tap-edit: could not patch source for ${request.slice(0, 100)}`,
+    timestamp: new Date().toISOString(),
   });
   return { ok: false };
 }
@@ -181,9 +218,13 @@ export function applyTapEditToSource(content: string, request: string): string |
   return patchTapEditInFile(content, testId, parsed.changes);
 }
 
-async function allTsxFiles(projectId: string): Promise<string[]> {
+function isEditableSourceFile(file: string): boolean {
+  return /^src\/.*\.(tsx|jsx|ts)$/.test(file.replace(/\\/g, "/")) && !file.endsWith(".d.ts");
+}
+
+async function allEditableSourceFiles(projectId: string): Promise<string[]> {
   const files = await listProjectFiles(projectId);
-  return files.filter((f) => /\.(tsx|jsx)$/.test(f));
+  return files.filter(isEditableSourceFile);
 }
 
 async function findCandidateFiles(
@@ -197,6 +238,12 @@ async function findCandidateFiles(
     testId && !isBroadContainerTestId(testId) ? testId : null;
   if (specificTestId) {
     for (const f of await findFilesWithTestId(projectId, specificTestId)) hits.add(f);
+    const dynamic = splitDynamicTestId(specificTestId);
+    if (dynamic) {
+      for (const f of await findFilesWithTestIdTemplatePrefix(projectId, dynamic.prefix)) {
+        hits.add(f);
+      }
+    }
   }
 
   const anchor = changes.find((c) => c.anchorText)?.anchorText;
@@ -283,6 +330,21 @@ function isBroadContainerTestId(testId: string): boolean {
   return false;
 }
 
+async function findFilesWithTestIdTemplatePrefix(
+  projectId: string,
+  prefix: string,
+): Promise<string[]> {
+  const marker = `testID={\`${prefix}-\${`;
+  const files = await listProjectFiles(projectId);
+  const hits: string[] = [];
+  for (const file of files) {
+    if (!isEditableSourceFile(file)) continue;
+    const content = await readProjectFile(projectId, file);
+    if (content.includes(marker)) hits.push(file);
+  }
+  return hits;
+}
+
 async function findFilesContainingText(
   projectId: string,
   text: string,
@@ -291,13 +353,55 @@ async function findFilesContainingText(
     (v, i, arr) => Boolean(v) && arr.indexOf(v) === i,
   );
   const files = await listProjectFiles(projectId);
-  const tsx = files.filter((f) => /\.(tsx|jsx)$/.test(f));
   const hits: string[] = [];
-  for (const file of tsx) {
+  for (const file of files) {
+    if (!isEditableSourceFile(file)) continue;
     const content = await readProjectFile(projectId, file);
     if (needles.some((n) => content.includes(n))) hits.push(file);
   }
   return hits;
+}
+
+/** testID prefixes like recipe-title-2 / tab-home → patch data arrays, not JSX literals. */
+const DATA_FIELD_BY_TEST_ID_PREFIX: Record<string, string> = {
+  "recipe-title": "title",
+  tab: "label",
+};
+
+function patchKeyedDataField(
+  content: string,
+  testId: string,
+  oldText: string,
+  newText: string,
+): string | null {
+  const dynamic = splitDynamicTestId(testId);
+  if (!dynamic) return null;
+  const field = DATA_FIELD_BY_TEST_ID_PREFIX[dynamic.prefix];
+  if (!field) return null;
+  return patchObjectFieldById(content, dynamic.suffix, field, oldText, newText);
+}
+
+function patchObjectFieldById(
+  content: string,
+  idValue: string,
+  fieldName: string,
+  oldText: string,
+  newText: string,
+): string | null {
+  const escapedId = idValue.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const needles = [oldText, stripEmoji(oldText)].filter(
+    (v, i, arr) => Boolean(v) && arr.indexOf(v) === i,
+  );
+  for (const old of needles) {
+    const escapedOld = old.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const re = new RegExp(
+      `(id:\\s*['"]${escapedId}['"][\\s\\S]{0,1600}?${fieldName}:\\s*)(['"])${escapedOld}\\2`,
+      "g",
+    );
+    if (!re.test(content)) continue;
+    return content.replace(re, `$1$2${newText}$2`);
+  }
+  return null;
 }
 
 function patchTapEditInFile(
@@ -400,6 +504,40 @@ function patchTapEditInFile(
       touched = true;
       continue;
     }
+
+    if (change.type === "fontWeight" || change.type === "fontFamily") {
+      const prop = change.type;
+      let patched: string | null = null;
+      if (change.type === "fontFamily" && change.value === "System") {
+        patched = stripTextStylePropByTestId(content, testId, "fontFamily", change.anchorText);
+      } else if (testId) {
+        patched = patchTextStyleByTestId(
+          content,
+          testId,
+          prop,
+          change.value,
+          change.anchorText,
+        );
+      }
+      if (patched) {
+        content = patched;
+        tag = testId ? findOpeningTagAtTestId(content, testId) : tag;
+        opening = tag?.tag ?? opening;
+        touched = true;
+        continue;
+      }
+      if (!tag) continue;
+      const next =
+        change.type === "fontFamily" && change.value === "System"
+          ? stripStylePropOnTag(opening, "fontFamily")
+          : patchStyleOnTag(opening, prop, change.value);
+      if (!next) continue;
+      content = replaceTagAt(content, tag, next);
+      tag = { start: tag.start, end: tag.start + next.length, tag: next };
+      opening = next;
+      touched = true;
+      continue;
+    }
   }
 
   if (!touched) return null;
@@ -424,7 +562,7 @@ function splitDynamicTestId(testId: string): { prefix: string; suffix: string } 
   if (idx <= 0) return null;
   const suffix = testId.slice(idx + 1);
   const prefix = testId.slice(0, idx);
-  if (!/^[A-Za-z][A-Za-z0-9]*$/.test(suffix) || !prefix) return null;
+  if (!/^[A-Za-z0-9]+$/.test(suffix) || !prefix) return null;
   return { prefix, suffix };
 }
 
@@ -991,31 +1129,172 @@ function stripConditionalStyle(
   return styleExpr.replace(re, "");
 }
 
+function normalizeTapFontFamily(label: string): string {
+  const key = label.trim().toLowerCase();
+  if (key === "default" || key === "system" || key === "sans") return "System";
+  if (key === "serif") return "Georgia";
+  if (key === "monospace" || key === "mono") return "monospace";
+  return label.trim();
+}
+
 function patchTextColorByTestId(
   content: string,
   testId: string,
   color: string,
   anchorText?: string,
 ): string | null {
+  return patchTextStyleByTestId(content, testId, "color", color, anchorText);
+}
+
+function patchTextStyleByTestId(
+  content: string,
+  testId: string,
+  prop: StyleProp,
+  value: string,
+  anchorText?: string,
+): string | null {
   if (!testId || isBroadContainerTestId(testId)) return null;
 
-  const propPatched = patchPropKeyedTextColor(content, testId, color, anchorText);
-  if (propPatched) return propPatched;
-
-  if (anchorText) {
-    const scoped = patchTextColorInContainerByAnchor(content, testId, anchorText, color);
+  if (prop === "color") {
+    const propPatched = patchPropKeyedTextColor(content, testId, value, anchorText);
+    if (propPatched) return propPatched;
+    if (anchorText) {
+      const scoped = patchTextColorInContainerByAnchor(content, testId, anchorText, value);
+      if (scoped) return scoped;
+    }
+    const mapPatched = patchMapItemBackground(content, testId, "color", value);
+    if (mapPatched) return mapPatched;
+  } else if (anchorText) {
+    const scoped = patchTextStyleInContainerByAnchor(content, testId, anchorText, prop, value);
     if (scoped) return scoped;
   }
-
-  const mapPatched = patchMapItemBackground(content, testId, "color", color);
-  if (mapPatched) return mapPatched;
 
   const el = findOpeningTagAtTestId(content, testId);
   if (!el || !/<Text\b/.test(el.tag)) return null;
 
-  const patched = patchStyleOnTag(el.tag, "color", color);
+  const patched = patchStyleOnTag(el.tag, prop, value);
   if (!patched) return null;
   return replaceTagAt(content, el, patched);
+}
+
+function patchTextStyleInContainerByAnchor(
+  content: string,
+  testId: string,
+  anchorText: string,
+  prop: StyleProp,
+  value: string,
+): string | null {
+  const container = findOpeningTagAtTestId(content, testId);
+  if (!container) return null;
+  const subtree = readContainerSubtree(content, container);
+  if (!subtree) return null;
+
+  const re = /<Text\b([^>]*)>([\s\S]*?)<\/Text>/g;
+  let m: RegExpExecArray | null;
+  let hit: { start: number; end: number; tag: string } | null = null;
+  while ((m = re.exec(subtree.slice)) !== null) {
+    const inner = (m[2] ?? "").trim();
+    if (!textInnerMatchesAnchor(inner, anchorText)) continue;
+    const absStart = subtree.offset + (m.index ?? 0);
+    const parsed = parseOpeningTagAt(content, absStart);
+    if (parsed) hit = parsed;
+  }
+  if (!hit) return null;
+
+  const patched = patchStyleOnTag(hit.tag, prop, value);
+  if (!patched) return null;
+  return content.slice(0, hit.start) + patched + content.slice(hit.end);
+}
+
+function stripTextStylePropByTestId(
+  content: string,
+  testId: string,
+  prop: StyleProp,
+  anchorText?: string,
+): string | null {
+  if (!testId || isBroadContainerTestId(testId)) return null;
+  if (anchorText) {
+    const container = findOpeningTagAtTestId(content, testId);
+    if (!container) return null;
+    const subtree = readContainerSubtree(content, container);
+    if (!subtree) return null;
+    const re = /<Text\b([^>]*)>([\s\S]*?)<\/Text>/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(subtree.slice)) !== null) {
+      const inner = (m[2] ?? "").trim();
+      if (!textInnerMatchesAnchor(inner, anchorText)) continue;
+      const absStart = subtree.offset + (m.index ?? 0);
+      const parsed = parseOpeningTagAt(content, absStart);
+      if (!parsed) continue;
+      const stripped = stripStylePropOnTag(parsed.tag, prop);
+      if (!stripped) continue;
+      return content.slice(0, parsed.start) + stripped + content.slice(parsed.end);
+    }
+  }
+  const el = findOpeningTagAtTestId(content, testId);
+  if (!el || !/<Text\b/.test(el.tag)) return null;
+  const stripped = stripStylePropOnTag(el.tag, prop);
+  if (!stripped) return null;
+  return replaceTagAt(content, el, stripped);
+}
+
+function stripStylePropOnTag(tag: string, prop: StyleProp): string | null {
+  const styleRange = findStyleAttribute(tag);
+  if (!styleRange) return null;
+  const inner = tag.slice(styleRange.innerStart, styleRange.innerEnd).trim();
+  let cleaned = inner;
+  if (inner.startsWith("{")) {
+    cleaned = stripStylePropFromObject(inner, prop);
+  } else if (inner.startsWith("[")) {
+    cleaned = stripStyleOverrideFromArray(inner, prop);
+  }
+  cleaned = cleaned.trim();
+  if (!cleaned || cleaned === "[]" || cleaned === "{}") {
+    return removeStyleAttributeFromTag(tag);
+  }
+  return tag.slice(0, styleRange.innerStart) + cleaned + tag.slice(styleRange.innerEnd);
+}
+
+function removeStyleAttributeFromTag(tag: string): string {
+  const marker = "style=";
+  const idx = tag.indexOf(marker);
+  if (idx === -1) return tag;
+  const braceStart = tag.indexOf("{", idx + marker.length);
+  if (braceStart === -1) return tag;
+  let depth = 0;
+  let quote: string | null = null;
+  let braceEnd = -1;
+  for (let i = braceStart; i < tag.length; i++) {
+    const c = tag[i];
+    if (quote) {
+      if (c === quote && tag[i - 1] !== "\\") quote = null;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === "`") {
+      quote = c;
+      continue;
+    }
+    if (c === "{") depth++;
+    else if (c === "}") {
+      depth--;
+      if (depth === 0) {
+        braceEnd = i;
+        break;
+      }
+    }
+  }
+  if (braceEnd === -1) return tag;
+  const before = tag.slice(0, idx).replace(/\s+$/, "");
+  const after = tag.slice(braceEnd + 1);
+  return before + after;
+}
+
+function stripStylePropFromObject(objExpr: string, prop: StyleProp): string {
+  const body = objExpr.replace(/^\{|\}$/g, "").trim();
+  const propRe = new RegExp(`,?\\s*${prop}\\s*:\\s*['"\`][^'"\`]*['"\`]`);
+  const cleaned = body.replace(propRe, "").replace(/^,\s*/, "").trim();
+  if (!cleaned) return "{}";
+  return `{ ${cleaned} }`;
 }
 
 function patchBackgroundNearText(
@@ -1197,6 +1476,9 @@ function patchTextReplaceWithTestId(
   newText: string,
 ): string | null {
   if (testId && !isBroadContainerTestId(testId)) {
+    const dataPatched = patchKeyedDataField(content, testId, oldText, newText);
+    if (dataPatched) return dataPatched;
+
     const propPatched = patchPropKeyedText(content, testId, oldText, newText);
     if (propPatched) return propPatched;
 
@@ -1848,11 +2130,12 @@ function findStyleAttribute(
 }
 
 function stripStyleOverrideFromArray(arrayExpr: string, prop: StyleProp): string {
-  const re = new RegExp(
-    `,\\s*\\{\\s*${prop}\\s*:\\s*['"\`][^'"\`]*['"\`]\\s*\\}`,
-    "g",
-  );
-  return arrayExpr.replace(re, "");
+  const inline = new RegExp(`\\{\\s*${prop}\\s*:\\s*['"\`][^'"\`]*['"\`]\\s*\\}`, "g");
+  let out = arrayExpr.replace(inline, "");
+  out = out.replace(/,\s*,/g, ",");
+  out = out.replace(/\[\s*,/g, "[");
+  out = out.replace(/,\s*\]/g, "]");
+  return out;
 }
 
 function mergeStyleObject(objExpr: string, prop: StyleProp, value: string): string {
@@ -1897,6 +2180,12 @@ function tapEditSummary(changes: TapEditChange[]): string {
       parts.push(`the text is now "${c.value}"`);
     } else if (c.type === "color") {
       parts.push("the text color is updated");
+    } else if (c.type === "fontWeight") {
+      parts.push(c.value === "700" ? "the text is bold now" : "the text is normal weight now");
+    } else if (c.type === "fontFamily") {
+      parts.push(
+        c.value === "System" ? "the font is back to default" : `the font is now ${c.value}`,
+      );
     } else if (c.type === "background") {
       parts.push("the background color is updated");
     } else if (c.type === "removeIcon") {

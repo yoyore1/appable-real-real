@@ -44,6 +44,13 @@ To test on a real phone, set `PUBLIC_HOST` in `.env` to your machine's LAN
 IP and make sure the phone is on the same Wi-Fi, then scan the QR with
 Expo Go.
 
+**Expo Go SDK:** The golden template pins **Expo SDK 54** so projects work
+with Expo Go from the App Store / Play Store. If you see "requires a newer
+version of Expo Go", the project was likely seeded with a newer SDK — rebuild
+the golden image (`docker build -t appable/expo-template:latest infra/expo-template`)
+or run `node apps/api/scripts/fix-expo-go-compat.mjs <projectId>` on an
+existing project.
+
 ## Notes
 
 - Project files live in per-project Docker volumes; the agent edits them via

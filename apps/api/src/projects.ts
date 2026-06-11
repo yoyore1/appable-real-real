@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { getDb } from "@appable/db";
 import { requireAuth } from "./auth.js";
-import { ensureRunning, previewUrls, stopProject, undoLastChange } from "./orchestrator.js";
+import { ensureRunning, resolveLivePreview, stopProject, undoLastChange } from "./orchestrator.js";
 import { cancelBuild, isBuilding } from "./agent/loop.js";
 import { ensureProjectSpec } from "./interview.js";
 
@@ -41,10 +41,7 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
     if (!project || project.userId !== req.user.userId) {
       return reply.code(404).send({ error: "Project not found" });
     }
-    const preview =
-      project.status === "running" && project.metroPort
-        ? previewUrls(project.metroPort)
-        : null;
+    const preview = await resolveLivePreview(project);
     return { ...project, preview };
   });
 

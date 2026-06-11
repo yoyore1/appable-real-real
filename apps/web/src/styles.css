@@ -1270,6 +1270,86 @@ textarea:focus {
   }
 }
 
+.chat-attach {
+  flex-shrink: 0;
+}
+
+.chat-attach-error {
+  margin: 0;
+  color: var(--amber);
+}
+
+.chat-pending-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chat-pending-attach {
+  position: relative;
+  margin: 0;
+  width: 56px;
+  height: 56px;
+  border-radius: var(--r-sm);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: var(--paper-deep);
+}
+
+.chat-pending-attach img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.chat-pending-remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 99px;
+  border: none;
+  background: rgba(28, 24, 20, 0.72);
+  color: #fff;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.chat-msg-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.chat-attach-thumb {
+  margin: 0;
+  width: 72px;
+  height: 72px;
+  border-radius: var(--r-sm);
+  overflow: hidden;
+  border: 1px solid var(--line-soft);
+  background: var(--paper-deep);
+}
+
+.chat-attach-thumb img,
+.chat-attach-thumb-placeholder {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
+.chat-attach-thumb-placeholder {
+  background: var(--line-soft);
+}
+
 .chat-inputbar input {
   flex: 1;
   border: none;
@@ -1681,6 +1761,11 @@ textarea:focus {
   min-height: 0;
 }
 
+/* Tap-to-edit: room for panel (left) + phone (right) side by side */
+.build-cols-tap-edit {
+  grid-template-columns: minmax(300px, 360px) minmax(620px, 1fr) minmax(260px, 300px);
+}
+
 .bcol {
   display: flex;
   flex-direction: column;
@@ -1733,14 +1818,41 @@ textarea:focus {
   overflow-y: auto;
 }
 
+.bcol-mid-tap-edit {
+  align-items: stretch;
+  overflow-x: auto;
+}
+
 .phone-stage {
   display: flex;
-  flex-direction: row;
+  flex-flow: row nowrap;
   align-items: center;
   justify-content: center;
   gap: 20px;
   flex-shrink: 0;
+  width: max-content;
   max-width: 100%;
+  margin-inline: auto;
+}
+
+/* Edit controls always left of the phone — never stacked above */
+.phone-stage-editing {
+  display: grid;
+  grid-template-columns: 240px auto;
+  grid-template-rows: auto;
+  align-items: center;
+  justify-content: center;
+  column-gap: 20px;
+}
+
+.phone-stage-editing .edit-panel {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.phone-stage-editing .phone-device {
+  grid-column: 2;
+  grid-row: 1;
 }
 
 .agent-line {
@@ -1941,7 +2053,13 @@ textarea:focus {
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
-  width: 350px;
+  width: 100%;
+  max-width: 350px;
+}
+
+.bcol-mid-tap-edit .phone-toolbar {
+  max-width: 620px;
+  align-self: center;
 }
 
 .phone-toolbar-main {
@@ -2037,6 +2155,29 @@ textarea:focus {
   margin: 0;
 }
 
+.edit-pending-notice {
+  width: 100%;
+  max-width: 620px;
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: var(--r-md);
+  border: 1px solid #e8c96a;
+  background: var(--amber-tint);
+  color: var(--ink-soft);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.edit-pending-notice p {
+  margin: 0 0 10px;
+}
+
+.edit-pending-notice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .phone-device.phone-editing .phone {
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.18),
@@ -2101,6 +2242,49 @@ textarea:focus {
   height: 40px;
   padding: 3px;
   cursor: pointer;
+}
+
+.edit-font-row {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.edit-font-row select {
+  width: 100%;
+  height: 40px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  font-family: var(--ui);
+  font-size: 14px;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.edit-bold-toggle {
+  display: flex;
+  gap: 6px;
+}
+
+.edit-bold-toggle button {
+  flex: 1;
+  height: 36px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--paper);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-soft);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.edit-bold-toggle button.on {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--paper);
 }
 
 .edit-colors {

@@ -3,6 +3,7 @@ import type {
   AgentStatusEvent,
   AppSpec,
   BuildEventEvent,
+  ChatAttachment,
   ClientMessage,
   PreviewStatusEvent,
   ProjectStatus,
@@ -14,6 +15,7 @@ export interface ChatItem {
   id: string;
   role: "user" | "assistant";
   text: string;
+  attachments?: ChatAttachment[];
   streaming?: boolean;
 }
 
@@ -36,7 +38,11 @@ export interface ProjectSocketState {
   /** Bumps when a new checkpoint is saved (for undo button state). */
   checkpointsVersion: number;
   send: (msg: ClientMessage) => void;
-  appendLocal: (kind: "interview" | "brainstorm" | "build", text: string) => void;
+  appendLocal: (
+    kind: "interview" | "brainstorm" | "build",
+    text: string,
+    attachments?: ChatAttachment[],
+  ) => void;
   seed: (kind: "interview" | "brainstorm" | "build", items: ChatItem[]) => void;
   clearInterviewSuggestions: () => void;
 }
@@ -197,8 +203,17 @@ export function useProjectSocket(projectId: string | null): ProjectSocketState {
   }, []);
 
   const appendLocal = useCallback(
-    (kind: "interview" | "brainstorm" | "build", text: string) => {
-      const item: ChatItem = { id: `local-${Date.now()}`, role: "user", text };
+    (
+      kind: "interview" | "brainstorm" | "build",
+      text: string,
+      attachments?: ChatAttachment[],
+    ) => {
+      const item: ChatItem = {
+        id: `local-${Date.now()}`,
+        role: "user",
+        text,
+        ...(attachments?.length ? { attachments } : {}),
+      };
       if (kind === "interview") setInterview((i) => [...i, item]);
       else if (kind === "brainstorm") setBrainstorm((i) => [...i, item]);
       else setBuild((i) => [...i, item]);

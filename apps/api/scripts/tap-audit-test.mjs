@@ -47,6 +47,24 @@ assert("bad sample finds text-missing-testid", badIssues.some((i) => i.kind === 
 assert("bad sample finds pressable-missing-testid in map", badIssues.some((i) => i.kind === "pressable-missing-testid"));
 assert("report mentions issue count", formatTapEditAuditReport(badIssues).includes(String(badIssues.length)));
 
+const splitTitleSample = `export function Card({ title }) {
+  const parts = title.split("aghetti");
+  return (
+    <Text testID="recipe-title-1">
+      <>
+        <Text>{parts[0]}</Text>
+        <Text style={{ color: "red" }}>aghetti</Text>
+      </>
+    </Text>
+  );
+}`;
+const splitIssues = auditFileContent(splitTitleSample, "src/components/RecipeCard.tsx");
+assert("detects split title across Text nodes", splitIssues.some((i) => i.kind === "title-split-across-text"));
+
+const dayHackSample = `<Text>{day === 'Mon' ? "Monday" : day}</Text>`;
+const dayIssues = auditFileContent(dayHackSample, "src/components/MealPlanCard.tsx");
+assert("detects day display hack", dayIssues.some((i) => i.kind === "day-display-hack"));
+
 const pid = process.env.TAP_AUDIT_PROJECT_ID ?? "cmq8w9jk20001tlp0m4sbhx2m";
 const container = `appable-proj-${pid}`;
 if (process.env.TAP_AUDIT_SKIP_LIVE !== "1") {

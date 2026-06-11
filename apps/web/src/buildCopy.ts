@@ -108,6 +108,18 @@ function friendlyTapEditChange(change: string): string {
   );
   if (bgScoped) return `Change the ${bgScoped[1]} card background`;
   if (change.startsWith("set the background color to ")) return "Change the background color";
+  const fwScoped = change.match(/^set the font weight of "(.+)" to (bold|normal)$/u);
+  if (fwScoped) {
+    return fwScoped[2] === "bold"
+      ? `Make "${fwScoped[1]}" bold`
+      : `Make "${fwScoped[1]}" normal weight`;
+  }
+  const fw = change.match(/^set the font weight to (bold|normal)$/u);
+  if (fw) return fw[1] === "bold" ? "Make the text bold" : "Make the text normal weight";
+  const ffScoped = change.match(/^set the font family of "(.+)" to (.+)$/u);
+  if (ffScoped) return `Change "${ffScoped[1]}" font to ${ffScoped[2]}`;
+  const ff = change.match(/^set the font family to (.+)$/u);
+  if (ff) return `Change the font to ${ff[1]}`;
   return change;
 }
 

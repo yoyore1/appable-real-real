@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { getDb } from "@appable/db";
 import type { AppSpec, LegalDocs } from "@appable/shared";
+import { decodeMessageWithAttachments } from "@appable/shared";
 import { emit } from "./events.js";
+import { loadBrainstormAppSnapshot } from "./brainstormSnapshot.js";
 import { pickInterviewModel, pickModel, pickSuggestionModel, streamChat, completeChat, messageContent, NO_THINKING_BODY, type ChatMessage } from "./models.js";
 
 /**
@@ -21,6 +23,8 @@ Rules:
 - Ask at most 6 questions total before wrapping up. Cover: who it's for, the
   2-3 core things a user does in the app, what data it shows/saves, look &
   feel (colors/vibe), and anything unique about their idea.
+- If the idea is two-sided (marketplace, matching, owner/provider, etc.),
+  ask who the different types of users are (e.g. dog owners vs dog walkers).
 - Your LAST question before the summary MUST ask what they'd like to name
   their app (e.g. "What would you like to call your app?"). Do not summarize
   until they answer the name question (or say "Let Appable pick" for it).
@@ -39,10 +43,118 @@ Rules:
   to refine and continue the interview (one question at a time) until they
   are happy, then summarize again with ${SPEC_READY_MARKER}.`;
 
-const BRAINSTORM_SYSTEM = `You are Appable's brainstorm buddy. The user is a
-non-technical person exploring an app idea. Help them think it through:
-features, audience, naming, what to build first. Be concise, warm, concrete
-and jargon-free. Never mention code or technical implementation details.`;
+const BRAINSTORM_SYSTEM = `You are Appable's brainstorm buddy — a product
+thinking partner for THEIR app, not a code assistant.
+
+App context is in "## App context" below. You MUST read and use it on every reply.
+- If context includes a name, screens, and features: you ALREADY know the app.
+  Never ask them to re-explain the basics ("what's the one main thing", "who is
+  it for", "what features have you planned") — that information is in context.
+- Discuss gaps, priorities, launch order, UX, naming, and focus — grounded in
+  their actual app, what's in "## What's actually built", and status (planned vs shipped).
+- Compare the original plan (spec) to what's built when both are present — call
+  out shipped vs missing vs drift.
+- Be concise, warm, concrete, and jargon-free.
+- Do NOT write code, mention files, or describe implementation. If they want
+  something built, say they can ask in the Build tab.
+
+If context says no spec yet, help explore the idea with focused questions.`;
+
+async function loadBrainstormContext(projectId: string): Promise<string> {
+  const db = getDb();
+  const project = await db.project.findUnique({ where: { id: projectId } });
+  const specRow = await db.spec.findFirst({
+    where: { projectId },
+    orderBy: { version: "desc" },
+  });
+
+  const parts: string[] = [];
+
+  if (specRow) {
+    const spec = specRow.data as unknown as AppSpec;
+    const built = ["running", "sleeping"].includes(project?.status ?? "");
+    parts.push(
+      `Name: ${spec.name}`,
+      `Tagline: ${spec.tagline}`,
+      `Description: ${spec.description}`,
+      `Category: ${spec.category}`,
+      `Vibe: ${spec.vibe.tone}; primary color ${spec.vibe.primaryColor}; ${spec.vibe.style}`,
+      `Screens:\n${spec.screens.map((s) => `  - ${s.name}: ${s.purpose}`).join("\n")}`,
+      `Features: ${spec.features.join("; ")}`,
+      spec.audienceRoles?.length
+        ? `User types (needs role picker): ${spec.audienceRoles.join(", ")}`
+        : "User types: single audience",
+      spec.nonGoals.length ? `Explicitly NOT building: ${spec.nonGoals.join("; ")}` : "",
+      `Project status: ${project?.status ?? "unknown"}${built ? " (app is built — customer can preview it)" : ""}`,
+    );
+  } else {
+    const interview = await db.conversation.findUnique({
+      where: { projectId_kind: { projectId, kind: "interview" } },
+      include: { messages: { orderBy: { createdAt: "asc" } } },
+    });
+    if (interview && interview.messages.length > 0) {
+      const tail = interview.messages
+        .slice(-10)
+        .map((m) => `${m.role === "user" ? "User" : "Assistant"}: ${m.content.replace(SPEC_READY_MARKER, "").trim().slice(0, 500)}`)
+        .join("\n");
+      parts.push(
+        "No formal app spec saved yet, but the interview conversation below covers their idea:",
+        tail,
+      );
+    } else {
+      parts.push(
+        "No app spec or interview yet — the user is still at the very start.",
+      );
+    }
+  }
+
+  const build = await db.conversation.findUnique({
+    where: { projectId_kind: { projectId, kind: "build" } },
+    include: { messages: { orderBy: { createdAt: "desc" }, take: 16 } },
+  });
+  if (build && build.messages.length > 0) {
+    const recent = [...build.messages]
+      .reverse()
+      .map((m) => {
+        const raw = decodeMessageWithAttachments(m.content).text;
+        const text =
+          m.role === "user" && raw.startsWith("[Tap edit]")
+            ? `(tap-to-edit) ${raw.replace(/^\[Tap edit\]\s*/, "").slice(0, 200)}`
+            : raw;
+        return `${m.role === "user" ? "User" : "Assistant"}: ${text.slice(0, 320)}`;
+      })
+      .join("\n");
+    if (recent.trim()) {
+      parts.push(`Recent build-tab activity (requests + what was done):\n${recent}`);
+    }
+  }
+
+  const brainstorm = await db.conversation.findUnique({
+    where: { projectId_kind: { projectId, kind: "brainstorm" } },
+    include: { messages: { orderBy: { createdAt: "desc" }, take: 6 } },
+  });
+  if (brainstorm && brainstorm.messages.length > 1) {
+    const prior = [...brainstorm.messages]
+      .reverse()
+      .slice(0, -1)
+      .map((m) => `${m.role === "user" ? "User" : "Assistant"}: ${m.content.slice(0, 280)}`)
+      .join("\n");
+    if (prior.trim()) {
+      parts.push(`Earlier brainstorm in this session:\n${prior}`);
+    }
+  }
+
+  const built = await loadBrainstormAppSnapshot(projectId);
+  if (built) {
+    parts.push(`## What's actually built\n${built}`);
+  } else if (["running", "sleeping"].includes(project?.status ?? "")) {
+    parts.push(
+      "## What's actually built\nApp exists but snapshot unavailable (preview waking up). Use spec + build activity above.",
+    );
+  }
+
+  return parts.filter(Boolean).join("\n\n");
+}
 
 const SPEC_EXTRACTION_PROMPT = `Based on the interview conversation above,
 output the app specification as pure JSON (no markdown fences, no prose)
@@ -57,19 +169,25 @@ matching exactly this TypeScript shape:
   "screens": [ { "name": string, "purpose": string, "elements": [string] } ],
   "dataModel": [ { "name": string, "fields": [ { "name": string, "type": string } ] } ],
   "features": [string],
+  "audienceRoles": [string],   // distinct user types if two-sided, e.g. ["Dog owner","Dog walker"]; else []
   "nonGoals": [string]
 }
 
 Design 3-5 screens that make sense for the idea. primaryColor must be a hex
-color. Output ONLY the JSON object.`;
+color. If the app serves two distinct user types, set audienceRoles to both
+(e.g. buyer and seller). Otherwise audienceRoles is [].
+Output ONLY the JSON object.`;
 
 type Kind = "interview" | "brainstorm";
 
 export async function handleChat(
   projectId: string,
   kind: Kind,
-  userText: string,
+  input: string | { agentText: string; storedText?: string },
 ): Promise<void> {
+  const agentText = typeof input === "string" ? input : input.agentText;
+  const storedText = typeof input === "string" ? input : (input.storedText ?? input.agentText);
+  const userText = agentText;
   const db = getDb();
 
   const conversation = await db.conversation.upsert({
@@ -79,7 +197,7 @@ export async function handleChat(
   });
 
   await db.message.create({
-    data: { conversationId: conversation.id, role: "user", content: userText },
+    data: { conversationId: conversation.id, role: "user", content: storedText },
   });
 
   const history = await db.message.findMany({
@@ -87,15 +205,25 @@ export async function handleChat(
     orderBy: { createdAt: "asc" },
   });
 
-  const system = kind === "interview" ? INTERVIEW_SYSTEM : BRAINSTORM_SYSTEM;
+  const system =
+    kind === "interview"
+      ? INTERVIEW_SYSTEM
+      : `${BRAINSTORM_SYSTEM}\n\n## App context\n${await loadBrainstormContext(projectId)}`;
   const messages: ChatMessage[] = [
     { role: "system", content: system },
-    ...history.map(
-      (m): ChatMessage => ({
+    ...history.map((m, idx): ChatMessage => {
+      const isLatestUser = m.role === "user" && idx === history.length - 1;
+      const content =
+        m.role === "user"
+          ? isLatestUser
+            ? userText
+            : decodeMessageWithAttachments(m.content).text
+          : m.content;
+      return {
         role: m.role === "user" ? "user" : "assistant",
-        content: m.content,
-      }),
-    ),
+        content,
+      };
+    }),
   ];
 
   const choice =
@@ -572,6 +700,9 @@ function parseSpecJson(text: string): AppSpec | null {
       parsed.dataModel ??= [];
       parsed.features ??= [];
       parsed.nonGoals ??= [];
+      parsed.audienceRoles = Array.isArray(parsed.audienceRoles)
+        ? parsed.audienceRoles.filter((r: unknown) => typeof r === "string" && r.trim())
+        : [];
       return parsed as AppSpec;
     }
     return null;

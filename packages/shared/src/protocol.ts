@@ -1,4 +1,5 @@
 import type { AppSpec, ProjectStatus } from "./spec.js";
+import type { ChatAttachment } from "./chatAttachments.js";
 
 /**
  * Realtime protocol: one WebSocket per open project.
@@ -23,7 +24,11 @@ export interface ChatSendMessage {
   /** Which conversation this belongs to. */
   conversation: "interview" | "brainstorm" | "build";
   text: string;
+  /** Optional reference photos (images only). */
+  attachments?: ChatAttachment[];
 }
+
+export type { ChatAttachment } from "./chatAttachments.js";
 
 export interface BuildStartMessage {
   type: "build.start";
