@@ -1,10 +1,17 @@
 import { getDb } from "@appable/db";
 import type { AppSpec } from "@appable/shared";
 import { emit } from "../events.js";
-import { completeChat, pickModel, type ChatMessage, type ModelChoice } from "../models.js";
+import {
+  BUILD_CALL_TIMEOUT_MS,
+  completeChatResilient,
+  pickAgentModel,
+  pickModel,
+  type ChatMessage,
+  type ModelChoice,
+} from "../models.js";
+import { env } from "../env.js";
 import { randomUUID } from "node:crypto";
 import {
-  checkBundle,
   createCheckpoint,
   ensureRunning,
   getHeadRef,
@@ -12,6 +19,7 @@ import {
   listProjectFiles,
   resetToGitRef,
   touch,
+  verifyApp,
 } from "../orchestrator.js";
 import { buildSystemPrompt, editSystemPrompt, healSystemPrompt } from "./prompts.js";
 import { agentTools, executeTool } from "./tools.js";
@@ -59,12 +67,22 @@ function status(
 /**
  * The build agent: plan-then-execute tool loop with Metro error self-healing.
  */
+/** Absolute ceiling for one build run - past this we fail loudly, never hang. */
+const BUILD_DEADLINE_MS = 30 * 60_000;
+
 export async function runBuild(projectId: string): Promise<void> {
   if (activeBuilds.has(projectId)) {
     throw new Error("A build is already running for this project");
   }
   const state = { cancelled: false };
   activeBuilds.set(projectId, state);
+
+  let deadlineHit = false;
+  const deadline = setTimeout(() => {
+    deadlineHit = true;
+    state.cancelled = true;
+    void logBuild(projectId, "error", "system", "Build exceeded the 30 minute deadline - stopping.");
+  }, BUILD_DEADLINE_MS);
 
   const db = getDb();
   try {
@@ -95,6 +113,7 @@ export async function runBuild(projectId: string): Promise<void> {
     status(projectId, "planning", "Planning your app...");
     const finished = await agentLoop(projectId, choice, messages, MAX_ITERATIONS, state, "BUILD COMPLETE");
     if (state.cancelled) {
+      if (deadlineHit) throw new Error("Build took too long and was stopped automatically");
       await finishCancelled(projectId);
       return;
     }
@@ -105,15 +124,16 @@ export async function runBuild(projectId: string): Promise<void> {
     // Self-heal loop: read Metro logs, fix anything red, repeat.
     for (let round = 1; round <= MAX_HEAL_ROUNDS; round++) {
       if (state.cancelled) {
+        if (deadlineHit) throw new Error("Build took too long and was stopped automatically");
         await finishCancelled(projectId);
         return;
       }
-      status(projectId, "checking", "Checking your app for problems...");
-      // Force a real bundle compile - this is what actually surfaces errors.
-      const bundleError = await checkBundle(projectId);
+      status(projectId, "checking", "Making sure everything works...");
+      // Force compile + preview smoke — catches "compiles but dead on launch".
+      const verifyError = await verifyApp(projectId);
       const logs = await getProjectLogs(projectId, 150);
       const logErrors = extractErrors(logs);
-      const errors = [bundleError, logErrors].filter(Boolean).join("\n---\n") || null;
+      const errors = [verifyError, logErrors].filter(Boolean).join("\n---\n") || null;
       if (!errors) break;
 
       status(projectId, "fixing", "Polishing a few details...");
@@ -126,7 +146,34 @@ export async function runBuild(projectId: string): Promise<void> {
           content: `The Expo dev server is reporting errors. Fix them.\n\nRecent logs:\n${errors}`,
         },
       ];
-      await agentLoop(projectId, choice, healMessages, HEAL_ITERATIONS, state, "FIX COMPLETE");
+      const healChoice = pickAgentModel("build", round);
+      if (env.buildRouting === "mixed" && round >= 2) {
+        await logBuild(projectId, "info", "system", `Mixed routing: heal round ${round} on ${healChoice.model}.`);
+      }
+      await agentLoop(projectId, healChoice, healMessages, HEAL_ITERATIONS, state, "FIX COMPLETE");
+    }
+
+    status(projectId, "checking", "Making sure your app actually loads...");
+    let launchError = await verifyApp(projectId);
+    if (launchError) {
+      status(projectId, "fixing", "Fixing a launch issue...");
+      await logBuild(projectId, "warn", "system", `Preview smoke failed:\n${launchError}`);
+      const healMessages: ChatMessage[] = [
+        { role: "system", content: healSystemPrompt(spec) },
+        {
+          role: "user",
+          content: `The app compiles but fails the preview smoke test. Fix it so the app loads in the web preview.\n\n${launchError}`,
+        },
+      ];
+      const healChoice = pickAgentModel("build", MAX_HEAL_ROUNDS + 1);
+      if (env.buildRouting === "mixed") {
+        await logBuild(projectId, "info", "system", `Mixed routing: launch heal on ${healChoice.model}.`);
+      }
+      await agentLoop(projectId, healChoice, healMessages, HEAL_ITERATIONS, state, "FIX COMPLETE");
+      launchError = await verifyApp(projectId);
+      if (launchError) {
+        await logBuild(projectId, "warn", "system", `Preview still failing after heal:\n${launchError}`);
+      }
     }
 
     status(projectId, "checking", "Saving your progress...");
@@ -145,6 +192,7 @@ export async function runBuild(projectId: string): Promise<void> {
     emit(projectId, { type: "project.status", status: "error" });
     status(projectId, "failed", "Something went wrong building your app.");
   } finally {
+    clearTimeout(deadline);
     activeBuilds.delete(projectId);
   }
 }
@@ -200,20 +248,27 @@ export async function runEdit(projectId: string, request: string): Promise<void>
     status(projectId, "writing", "Making your change...");
     const finished = await agentLoop(projectId, choice, messages, EDIT_ITERATIONS, state, "EDIT COMPLETE");
 
-    // Verify the bundle still compiles; one heal round if not.
-    status(projectId, "checking", "Double-checking everything still works...");
-    let bundleError = await checkBundle(projectId);
-    if (bundleError) {
+    // Verify compile + preview smoke; heal up to MAX_HEAL_ROUNDS if not.
+    status(projectId, "checking", "Making sure your app still loads...");
+    let verifyError = await verifyApp(projectId);
+    for (let round = 1; verifyError && round <= MAX_HEAL_ROUNDS; round++) {
       status(projectId, "fixing", "Fixing a small issue...");
+      const healChoice = pickAgentModel("edit", round);
+      if (env.buildRouting === "mixed" && round >= 2) {
+        await logBuild(projectId, "info", "system", `Mixed routing: edit heal round ${round} on ${healChoice.model}.`);
+      }
       const healMessages: ChatMessage[] = [
         { role: "system", content: healSystemPrompt(spec) },
-        { role: "user", content: `Your edit broke the build. Fix it.\n\n${bundleError}` },
+        {
+          role: "user",
+          content: `Your edit broke the app (compile or preview). Fix it.\n\n${verifyError}`,
+        },
       ];
-      await agentLoop(projectId, choice, healMessages, HEAL_ITERATIONS, state, "FIX COMPLETE");
-      bundleError = await checkBundle(projectId);
+      await agentLoop(projectId, healChoice, healMessages, HEAL_ITERATIONS, state, "FIX COMPLETE");
+      verifyError = await verifyApp(projectId);
     }
 
-    if (bundleError) {
+    if (verifyError) {
       // Could not make it work - roll back so the user keeps a working app.
       await resetToGitRef(projectId, safeRef);
       await sendEditReply(
@@ -289,10 +344,33 @@ async function agentLoop(
   state: { cancelled: boolean },
   doneMarker: string,
 ): Promise<boolean> {
+  // Kimi sometimes narrates a plan with no tool calls; nudge it back to
+  // work instead of treating that as completion.
+  const MAX_NUDGES = 3;
+  let nudges = 0;
+
   for (let i = 0; i < maxIterations; i++) {
     if (state.cancelled) return false;
 
-    const msg = await completeChat({ choice, messages, tools: agentTools });
+    // Resilient call: per-attempt timeout, retry, then DeepInfra fallback.
+    // A dead provider surfaces as a failed build, never a silent hang.
+    const { msg, usedFallback } = await completeChatResilient({
+      choice,
+      messages,
+      tools: agentTools,
+      timeoutMs: BUILD_CALL_TIMEOUT_MS,
+      onRetry: (attempt, error) => {
+        void logBuild(
+          projectId,
+          "warn",
+          "system",
+          `Model call attempt ${attempt} failed (${error.slice(0, 160)}); retrying...`,
+        );
+      },
+    });
+    if (usedFallback) {
+      await logBuild(projectId, "warn", "system", "Primary model unavailable - continuing on backup model.");
+    }
     messages.push(msg as ChatMessage);
 
     if (msg.content) {
@@ -301,7 +379,13 @@ async function agentLoop(
 
     const toolCalls = msg.tool_calls ?? [];
     if (toolCalls.length === 0) {
-      return Boolean(msg.content?.includes(doneMarker));
+      if (msg.content?.includes(doneMarker)) return true;
+      if (++nudges > MAX_NUDGES) return false;
+      messages.push({
+        role: "user",
+        content: `Continue - execute your plan with tools now. Only reply "${doneMarker}" once everything is actually written and working.`,
+      });
+      continue;
     }
 
     for (const call of toolCalls) {
@@ -331,7 +415,8 @@ async function agentLoop(
         content: result,
       });
     }
-    await touch(projectId);
+    // Activity timestamp only - a DB blip must never kill a build.
+    await touch(projectId).catch(() => {});
   }
   return false;
 }
@@ -343,17 +428,38 @@ function reportToolStatus(
 ): void {
   switch (toolName) {
     case "write_file":
-      status(projectId, "writing", `Writing ${String(args.path ?? "a file")}...`);
+      status(projectId, "writing", friendlyWriteStatus(String(args.path ?? "")));
       break;
     case "run_command":
-      status(projectId, "installing", "Running a setup step...");
+      status(projectId, "installing", "Getting everything set up...");
       break;
     case "read_build_logs":
-      status(projectId, "checking", "Checking the build...");
+      status(projectId, "checking", "Making sure it all works...");
       break;
     default:
       break;
   }
+}
+
+function friendlyWriteStatus(path: string): string {
+  const p = path.replace(/\\/g, "/").toLowerCase();
+  if (p.includes("homescreen") || /home[^/]*\.tsx/.test(p)) {
+    return "Setting up your home screen...";
+  }
+  if (p.includes("screen")) return "Building a new screen...";
+  if (p.includes("component") || p.includes("layout")) {
+    return "Designing the look and feel...";
+  }
+  if (p.includes("navigation") || p.includes("router")) {
+    return "Connecting your screens...";
+  }
+  if (p.includes("storage") || p.includes("/data") || p.includes("/lib/")) {
+    return "Setting up how your app remembers things...";
+  }
+  if (p.includes("theme") || p.includes("color") || p.includes("style")) {
+    return "Applying your colors and style...";
+  }
+  return "Bringing your app to life...";
 }
 
 function extractErrors(logs: string): string | null {

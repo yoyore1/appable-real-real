@@ -49,16 +49,65 @@ export function previewUrls(port: number): PreviewInfo {
   };
 }
 
+async function getContainerNameForPort(port: number): Promise<string | null> {
+  const list = await docker.listContainers({ all: true });
+  for (const info of list) {
+    for (const binding of info.Ports ?? []) {
+      if (binding.PublicPort === port) {
+        const name = info.Names.find((n) => n.startsWith("/appable-proj-"));
+        return name ? name.slice(1) : info.Names[0]?.slice(1) ?? null;
+      }
+    }
+  }
+  return null;
+}
+
+/** True when nothing else (or only this project's container) holds the port. */
+async function isHostPortAvailable(port: number, projectId: string): Promise<boolean> {
+  const owner = await getContainerNameForPort(port);
+  if (!owner) return true;
+  return owner === containerName(projectId);
+}
+
 async function allocatePort(projectId: string): Promise<number> {
-  for (let port = PORT_RANGE_START; port <= PORT_RANGE_END; port++) {
+  const db = getDb();
+  const project = await db.project.findUnique({ where: { id: projectId } });
+
+  const tryClaim = async (port: number): Promise<boolean> => {
+    if (!(await isHostPortAvailable(port, projectId))) return false;
     const claimed = await redis.set(portKey(port), projectId, "EX", 60 * 60 * 24, "NX");
-    if (claimed === "OK") return port;
+    if (claimed === "OK") return true;
+    return (await redis.get(portKey(port))) === projectId;
+  };
+
+  if (project?.metroPort && (await tryClaim(project.metroPort))) {
+    return project.metroPort;
+  }
+
+  for (let port = PORT_RANGE_START; port <= PORT_RANGE_END; port++) {
+    if (port === project?.metroPort) continue;
+    if (await tryClaim(port)) return port;
   }
   throw new Error("No free preview ports available");
 }
 
-async function releasePort(port: number): Promise<void> {
+async function releasePort(port: number, projectId?: string): Promise<void> {
+  if (projectId) {
+    const owner = await redis.get(portKey(port));
+    if (owner && owner !== projectId) return;
+  }
   await redis.del(portKey(port));
+}
+
+function isPortBindError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /port is already allocated|address already in use|bind for/i.test(msg);
+}
+
+async function removeProjectContainer(projectId: string): Promise<void> {
+  const container = await findContainer(projectId);
+  if (!container) return;
+  await container.remove({ force: true }).catch(() => {});
 }
 
 async function findContainer(projectId: string): Promise<Docker.Container | null> {
@@ -80,90 +129,125 @@ export async function ensureRunning(projectId: string): Promise<PreviewInfo> {
   if (container) {
     const inspect = await container.inspect();
 
-    // If the public host changed since the container was created (e.g. LAN
-    // IP auto-detection), Metro advertises the wrong hostname to Expo Go.
-    // Recreate the container - the volume keeps all project files.
-    const envHostname = inspect.Config.Env?.find((e) =>
-      e.startsWith("REACT_NATIVE_PACKAGER_HOSTNAME="),
-    )?.split("=")[1];
-    if (envHostname && envHostname !== env.publicHost) {
-      console.log(
-        `[orchestrator] host changed (${envHostname} -> ${env.publicHost}); recreating container for ${projectId}`,
-      );
-      if (inspect.State.Running) await container.stop({ t: 5 }).catch(() => {});
+    // Container was created but never started (e.g. port bind failed) — discard it.
+    if (inspect.State.Status === "created" && !inspect.State.Running) {
+      console.warn(`[orchestrator] removing failed container for ${projectId}`);
       await container.remove({ force: true }).catch(() => {});
+      if (project.metroPort) await releasePort(project.metroPort, projectId);
       container = null;
-    } else if (inspect.State.Running && project.metroPort) {
-      await touch(projectId);
-      await ensureEditBridge(projectId);
-      return previewUrls(project.metroPort);
-    } else if (!inspect.State.Running) {
-      // Reuse the existing container (volume + port config preserved).
-      emit(projectId, { type: "preview.status", status: "starting" });
-      await container.start();
-      const port = project.metroPort ?? (await allocatePort(projectId));
-      await redis.set(routeKey(projectId), String(port));
-      await waitForMetro(projectId, port);
-      await ensureEditBridge(projectId);
-      await db.project.update({
-        where: { id: projectId },
-        data: { status: "running", lastActiveAt: new Date(), metroPort: port, webPort: port },
-      });
-      const urls = previewUrls(port);
-      emit(projectId, { type: "preview.status", status: "ready", ...urlsToEvent(urls) });
-      return urls;
+    } else {
+      // If the public host changed since the container was created (e.g. LAN
+      // IP auto-detection), Metro advertises the wrong hostname to Expo Go.
+      // Recreate the container - the volume keeps all project files.
+      const envHostname = inspect.Config.Env?.find((e) =>
+        e.startsWith("REACT_NATIVE_PACKAGER_HOSTNAME="),
+      )?.split("=")[1];
+      if (envHostname && envHostname !== env.publicHost) {
+        console.log(
+          `[orchestrator] host changed (${envHostname} -> ${env.publicHost}); recreating container for ${projectId}`,
+        );
+        if (inspect.State.Running) await container.stop({ t: 5 }).catch(() => {});
+        await container.remove({ force: true }).catch(() => {});
+        if (project.metroPort) await releasePort(project.metroPort, projectId);
+        container = null;
+      } else if (inspect.State.Running && project.metroPort) {
+        await touch(projectId);
+        await ensureEditBridge(projectId);
+        return previewUrls(project.metroPort);
+      } else if (!inspect.State.Running) {
+        // Reuse the existing container (volume + port config preserved).
+        emit(projectId, { type: "preview.status", status: "starting" });
+        try {
+          await container.start();
+        } catch (err) {
+          if (!isPortBindError(err)) throw err;
+          console.warn(`[orchestrator] port bind failed restarting ${projectId}; recreating`);
+          await container.remove({ force: true }).catch(() => {});
+          if (project.metroPort) await releasePort(project.metroPort, projectId);
+          container = null;
+        }
+        if (container) {
+          const port = project.metroPort ?? (await allocatePort(projectId));
+          await redis.set(routeKey(projectId), String(port));
+          await waitForMetro(projectId, port);
+          await ensureEditBridge(projectId);
+          await db.project.update({
+            where: { id: projectId },
+            data: { status: "running", lastActiveAt: new Date(), metroPort: port, webPort: port },
+          });
+          const urls = previewUrls(port);
+          emit(projectId, { type: "preview.status", status: "ready", ...urlsToEvent(urls) });
+          return urls;
+        }
+      }
     }
   }
 
   emit(projectId, { type: "preview.status", status: "starting" });
-  const port = await allocatePort(projectId);
 
-  try {
-    await docker.createVolume({ Name: volumeName(projectId) }).catch(() => {
-      /* already exists */
-    });
+  const maxAttempts = 8;
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const port = await allocatePort(projectId);
+    try {
+      await docker.createVolume({ Name: volumeName(projectId) }).catch(() => {
+        /* already exists */
+      });
 
-    container = await docker.createContainer({
-      name: containerName(projectId),
-      Image: env.goldenImage,
-      Env: [
-        `EXPO_PORT=${port}`,
-        `REACT_NATIVE_PACKAGER_HOSTNAME=${env.publicHost}`,
-      ],
-      ExposedPorts: { [`${port}/tcp`]: {} },
-      HostConfig: {
-        Binds: [`${volumeName(projectId)}:/app`],
-        PortBindings: { [`${port}/tcp`]: [{ HostPort: String(port) }] },
-        Memory: 2 * 1024 * 1024 * 1024,
-        NanoCpus: 2_000_000_000,
-        RestartPolicy: { Name: "no" },
-      },
-    });
-    await container.start();
-    await redis.set(routeKey(projectId), String(port));
-    await waitForMetro(projectId, port);
-    await ensureEditBridge(projectId);
-  } catch (err) {
-    await releasePort(port);
-    emit(projectId, { type: "preview.status", status: "error" });
-    throw err;
+      await removeProjectContainer(projectId);
+
+      container = await docker.createContainer({
+        name: containerName(projectId),
+        Image: env.goldenImage,
+        Env: [
+          `EXPO_PORT=${port}`,
+          `REACT_NATIVE_PACKAGER_HOSTNAME=${env.publicHost}`,
+        ],
+        ExposedPorts: { [`${port}/tcp`]: {} },
+        HostConfig: {
+          Binds: [`${volumeName(projectId)}:/app`],
+          PortBindings: { [`${port}/tcp`]: [{ HostPort: String(port) }] },
+          Memory: 2 * 1024 * 1024 * 1024,
+          NanoCpus: 2_000_000_000,
+          RestartPolicy: { Name: "no" },
+        },
+      });
+      await container.start();
+      await redis.set(routeKey(projectId), String(port));
+      await waitForMetro(projectId, port);
+      await ensureEditBridge(projectId);
+
+      const db2 = getDb();
+      await db2.project.update({
+        where: { id: projectId },
+        data: {
+          status: "running",
+          containerId: container.id,
+          metroPort: port,
+          webPort: port,
+          lastActiveAt: new Date(),
+        },
+      });
+
+      const urls = previewUrls(port);
+      emit(projectId, { type: "preview.status", status: "ready", ...urlsToEvent(urls) });
+      return urls;
+    } catch (err) {
+      lastErr = err;
+      await releasePort(port, projectId);
+      await removeProjectContainer(projectId);
+      if (!isPortBindError(err) || attempt === maxAttempts - 1) {
+        emit(projectId, { type: "preview.status", status: "error" });
+        throw err;
+      }
+      console.warn(
+        `[orchestrator] port ${port} unavailable for ${projectId}, retrying (${attempt + 1}/${maxAttempts})`,
+      );
+    }
   }
 
-  const db2 = getDb();
-  await db2.project.update({
-    where: { id: projectId },
-    data: {
-      status: "running",
-      containerId: container.id,
-      metroPort: port,
-      webPort: port,
-      lastActiveAt: new Date(),
-    },
-  });
-
-  const urls = previewUrls(port);
-  emit(projectId, { type: "preview.status", status: "ready", ...urlsToEvent(urls) });
-  return urls;
+  emit(projectId, { type: "preview.status", status: "error" });
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
 
 function urlsToEvent(urls: PreviewInfo): { webUrl: string; expUrl: string } {
@@ -296,7 +380,7 @@ export async function stopProject(projectId: string): Promise<void> {
   }
   const db = getDb();
   const project = await db.project.findUnique({ where: { id: projectId } });
-  if (project?.metroPort) await releasePort(project.metroPort);
+  if (project?.metroPort) await releasePort(project.metroPort, projectId);
   await redis.del(routeKey(projectId));
   await db.project.update({ where: { id: projectId }, data: { status: "sleeping" } });
   emit(projectId, { type: "preview.status", status: "stopped" });
@@ -460,18 +544,74 @@ export async function checkBundle(projectId: string): Promise<string | null> {
       `http://127.0.0.1:${project.metroPort}/index.ts.bundle?platform=web&dev=true`,
       { signal: AbortSignal.timeout(180_000) },
     );
-    if (res.ok) return null;
     const body = await res.text();
-    try {
-      const parsed = JSON.parse(body) as { type?: string; message?: string };
-      return `${parsed.type ?? "BundleError"}: ${parsed.message ?? body.slice(0, 2000)}`;
-    } catch {
-      return body.slice(0, 2000);
-    }
+    if (!res.ok) return parseBundleErrorBody(body, res.status);
+    return inspectBundleBody(body);
   } catch {
     // Metro unreachable or bundle took too long; log-based detection still applies.
     return null;
   }
+}
+
+const MIN_BUNDLE_BYTES = 8_000;
+
+function parseBundleErrorBody(body: string, status?: number): string {
+  try {
+    const parsed = JSON.parse(body) as { type?: string; message?: string };
+    return `${parsed.type ?? "BundleError"}: ${parsed.message ?? body.slice(0, 2000)}`;
+  } catch {
+    return status ? `HTTP ${status}: ${body.slice(0, 2000)}` : body.slice(0, 2000);
+  }
+}
+
+/** Deeper checks on a bundle that returned HTTP 200. */
+function inspectBundleBody(body: string): string | null {
+  if (body.length < MIN_BUNDLE_BYTES) {
+    return `Bundle too small (${body.length} bytes) — the app may not have built correctly.`;
+  }
+  // Metro error responses are JSON blobs, not JS bundles.
+  if (body.trimStart().startsWith("{")) {
+    return parseBundleErrorBody(body);
+  }
+  // Valid bundles are large JS with Metro's module registry. Do not scan
+  // for error class names — RN's own error-overlay code contains strings
+  // like "SyntaxError" and "TransformError" even when the app is healthy.
+  if (!/__d\(|registerComponent|AppRegistry/.test(body)) {
+    return "Bundle is missing app entry code — the app may not mount in the preview.";
+  }
+  return null;
+}
+
+async function checkPreviewShell(port: number): Promise<string | null> {
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/`, {
+      signal: AbortSignal.timeout(30_000),
+    });
+    const html = await res.text();
+    if (!res.ok) return `Preview page returned HTTP ${res.status}`;
+    if (html.length < 100) return "Preview page is empty";
+    if (/error-overlay|Failed to compile|RedBox/i.test(html)) {
+      return "Preview page is showing an error screen";
+    }
+    return null;
+  } catch (err) {
+    return `Preview page unreachable: ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+
+/**
+ * Full build/edit gate: bundle compiles AND the preview shell loads.
+ * Returns null when the app is healthy enough to show the customer.
+ */
+export async function verifyApp(projectId: string): Promise<string | null> {
+  const db = getDb();
+  const project = await db.project.findUnique({ where: { id: projectId } });
+  if (!project?.metroPort) return null;
+
+  const bundleError = await checkBundle(projectId);
+  if (bundleError) return bundleError;
+
+  return checkPreviewShell(project.metroPort);
 }
 
 // ---------------------------------------------------------------------------

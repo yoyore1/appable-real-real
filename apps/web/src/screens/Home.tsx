@@ -1,6 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import type { Route } from "../App.js";
 import { api, ensureSession, getUserEmail, isGuest } from "../api.js";
+import { MicButton } from "../components/MicButton.js";
+import { HoverTip } from "../components/HoverTip.js";
+import {
+  fetchInitialSuggestions,
+  IdeaSuggestionsPanel,
+  type SuggestionSet,
+} from "../components/IdeaSuggestions.js";
 
 const IDEA_POOL = [
   "A habit tracker that keeps me motivated with streaks",
@@ -26,87 +33,81 @@ function pickThree(except: string[] = []): string[] {
   return out;
 }
 
-// Web Speech API (Chrome/Edge). Typed loosely - not in standard lib.
-type SpeechRec = {
-  lang: string;
-  interimResults: boolean;
-  continuous: boolean;
-  onresult: (e: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void;
-  onend: () => void;
-  onerror: () => void;
-  start: () => void;
-  stop: () => void;
-};
-
-function getSpeechRecognition(): (new () => SpeechRec) | null {
-  const w = window as unknown as Record<string, unknown>;
-  return (w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null) as (new () => SpeechRec) | null;
-}
-
-const TYPE_IDEAS = [
-  "keeps track of my gym streaks",
-  "plans dinners for my picky kids",
-  "manages bookings for my nail clients",
-  "reminds me to water my plants",
-  "splits bills with my roommates",
+/** Interleaved: half “I want an app that…”, half short suggest nudges. */
+const GHOST_PHRASES: { kind: "build" | "suggest"; text: string }[] = [
+  { kind: "build", text: "keeps track of my gym streaks" },
+  { kind: "suggest", text: "Just say gym — we'll find the best idea" },
+  { kind: "build", text: "plans dinners for my picky kids" },
+  { kind: "suggest", text: "Meal prep on your mind? Hit Suggest ideas" },
+  { kind: "build", text: "manages bookings for my nail clients" },
+  { kind: "suggest", text: "Dog walking — one word, three apps" },
+  { kind: "build", text: "reminds me to water my plants" },
+  { kind: "suggest", text: "Type plants… we'll sketch something you'll love" },
+  { kind: "build", text: "splits bills with my roommates" },
+  { kind: "suggest", text: "Side hustle? We'll find the angle" },
+  { kind: "build", text: "helps me stick to a reading habit" },
+  { kind: "suggest", text: "Habit tracking — leave the box empty, we'll surprise you" },
 ];
 
 export function Home({ go }: { go: (r: Route) => void }) {
   const [idea, setIdea] = useState("");
   const [chips, setChips] = useState(() => pickThree());
+  const [chipsVisible, setChipsVisible] = useState(true);
   const [starting, setStarting] = useState(false);
-  const [recording, setRecording] = useState(false);
+  const [suggesting, setSuggesting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [ghost, setGhost] = useState("");
-  const recRef = useRef<SpeechRec | null>(null);
+  const [ghostKind, setGhostKind] = useState<"build" | "suggest">("build");
+  const [suggestStack, setSuggestStack] = useState<SuggestionSet[]>([]);
+  const [suggestIndex, setSuggestIndex] = useState(0);
 
-  const micSupported = useMemo(() => getSpeechRecognition() !== null, []);
   const hasAccount = !isGuest() && Boolean(getUserEmail());
+  const showSuggestions = suggestStack.length > 0;
+  const placeholder =
+    ghostKind === "build" ? `I want an app that ${ghost}` : ghost;
+  const suggestSeed = idea.trim() || "Fresh app inspiration";
 
-  // The input types example ideas to itself until the user starts writing.
   useEffect(() => {
     let phraseIdx = 0;
     let charIdx = 0;
     let deleting = false;
+
     const timer = setInterval(() => {
-      const phrase = TYPE_IDEAS[phraseIdx];
+      const { kind, text } = GHOST_PHRASES[phraseIdx % GHOST_PHRASES.length];
+      setGhostKind(kind);
+
       if (!deleting) {
         charIdx++;
-        if (charIdx >= phrase.length + 16) deleting = true;
+        if (charIdx >= text.length + 14) deleting = true;
       } else {
-        charIdx = Math.min(charIdx, phrase.length) - 1;
+        charIdx = Math.min(charIdx, text.length) - 1;
         if (charIdx <= 0) {
           deleting = false;
-          phraseIdx = (phraseIdx + 1) % TYPE_IDEAS.length;
+          phraseIdx++;
         }
       }
-      setGhost(phrase.slice(0, Math.min(Math.max(charIdx, 0), phrase.length)));
-    }, 65);
+
+      setGhost(text.slice(0, Math.min(Math.max(charIdx, 0), text.length)));
+    }, 50);
+
     return () => clearInterval(timer);
   }, []);
 
-  function toggleMic() {
-    if (recording) {
-      recRef.current?.stop();
-      return;
-    }
-    const Rec = getSpeechRecognition();
-    if (!Rec) return;
-    const rec = new Rec();
-    rec.lang = "en-US";
-    rec.interimResults = false;
-    rec.continuous = true;
-    rec.onresult = (e) => {
-      let text = "";
-      for (let i = 0; i < e.results.length; i++) text += e.results[i][0].transcript;
-      setIdea((prev) => (prev ? `${prev.trim()} ${text}` : text));
+  // Cycle example ideas with a soft fade.
+  useEffect(() => {
+    let swapTimer: ReturnType<typeof setTimeout> | undefined;
+    const interval = setInterval(() => {
+      setChipsVisible(false);
+      swapTimer = setTimeout(() => {
+        setChips((prev) => pickThree(prev));
+        setChipsVisible(true);
+      }, 720);
+    }, 5200);
+    return () => {
+      clearInterval(interval);
+      if (swapTimer) clearTimeout(swapTimer);
     };
-    rec.onend = () => setRecording(false);
-    rec.onerror = () => setRecording(false);
-    recRef.current = rec;
-    setRecording(true);
-    rec.start();
-  }
+  }, []);
 
   async function start() {
     const text = idea.trim();
@@ -123,6 +124,21 @@ export function Home({ go }: { go: (r: Route) => void }) {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong - try again");
       setStarting(false);
+    }
+  }
+
+  async function suggestIdeas() {
+    if (suggesting) return;
+    setSuggesting(true);
+    setError(null);
+    try {
+      const set = await fetchInitialSuggestions(idea);
+      setSuggestStack([set]);
+      setSuggestIndex(0);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not suggest ideas — try again");
+    } finally {
+      setSuggesting(false);
     }
   }
 
@@ -153,7 +169,7 @@ export function Home({ go }: { go: (r: Route) => void }) {
 
           <div className="idea-card rise d2">
             <textarea
-              placeholder={`I want an app that ${ghost}`}
+              placeholder={placeholder}
               value={idea}
               onChange={(e) => setIdea(e.target.value)}
               onKeyDown={(e) => {
@@ -165,31 +181,56 @@ export function Home({ go }: { go: (r: Route) => void }) {
             />
             <div className="idea-actions">
               <div className="idea-left-actions">
-                {micSupported && (
-                  <button
-                    className={recording ? "icon-btn recording" : "icon-btn"}
-                    onClick={toggleMic}
-                    title={recording ? "Stop recording" : "Speak your idea"}
-                  >
-                    {recording ? <StopIcon /> : <MicIcon />}
-                  </button>
-                )}
+                <MicButton
+                  tip="Speak your idea — we'll handle the rest."
+                  onTranscript={(chunk) =>
+                    setIdea((prev) => (prev ? `${prev.trim()} ${chunk}` : chunk))
+                  }
+                />
               </div>
-              <button
-                className="btn btn-primary"
-                onClick={start}
-                disabled={!idea.trim() || starting}
-              >
-                {starting ? "One moment" : "Let's build it"}
-              </button>
+              <div className="idea-actions-right">
+                <HoverTip
+                  text="Three app ideas worth building — type a topic, or we'll surprise you."
+                  delayMs={1000}
+                  wide
+                >
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={() => void suggestIdeas()}
+                    disabled={suggesting}
+                  >
+                    {suggesting ? "Thinking…" : "Suggest ideas"}
+                  </button>
+                </HoverTip>
+                <button
+                  className="btn btn-primary"
+                  onClick={() => void start()}
+                  disabled={!idea.trim() || starting}
+                >
+                  {starting ? "One moment" : "Let's build it"}
+                </button>
+              </div>
             </div>
           </div>
+
+          {showSuggestions && (
+            <IdeaSuggestionsPanel
+              seed={suggestSeed}
+              stack={suggestStack}
+              stackIndex={suggestIndex}
+              onStackChange={setSuggestStack}
+              onStackIndexChange={setSuggestIndex}
+              onUseIdea={(text) => {
+                setIdea(text);
+                setSuggestStack([]);
+              }}
+            />
+          )}
+
           {error && <p className="error-text" style={{ marginTop: 12 }}>{error}</p>}
 
-          <div className="chips rise d3">
-            <button className="chip chip-shuffle" onClick={() => setChips(pickThree(chips))}>
-              Need an idea?
-            </button>
+          <div className={chipsVisible ? "chips rise d3" : "chips rise d3 chips-fading"}>
             {chips.map((c) => (
               <button key={c} className="chip" onClick={() => setIdea(c)}>
                 {c}
@@ -247,23 +288,5 @@ export function Home({ go }: { go: (r: Route) => void }) {
 
       <footer className="home-footer">Appable — for people who've never written a line of code.</footer>
     </div>
-  );
-}
-
-function MicIcon() {
-  return (
-    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="9" y="2" width="6" height="12" rx="3" />
-      <path d="M5 10a7 7 0 0 0 14 0" />
-      <line x1="12" y1="19" x2="12" y2="22" />
-    </svg>
-  );
-}
-
-function StopIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-      <rect x="5" y="5" width="14" height="14" rx="2" />
-    </svg>
   );
 }

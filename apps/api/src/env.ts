@@ -60,10 +60,22 @@ export const env = {
   deepinfraBaseUrl: req("DEEPINFRA_BASE_URL", "https://api.deepinfra.com/v1/openai"),
   fireworksApiKey: process.env.FIREWORKS_API_KEY ?? "",
   fireworksBaseUrl: req("FIREWORKS_BASE_URL", "https://api.fireworks.ai/inference/v1"),
-  modelBuild: req("MODEL_BUILD", "moonshotai/Kimi-K2.6"),
+  openrouterApiKey: process.env.OPENROUTER_API_KEY ?? "",
+  openrouterBaseUrl: req("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
+  modelBuild: req("MODEL_BUILD", "accounts/fireworks/models/minimax-m2p7"),
+  /** DeepInfra-hosted build model, used when Fireworks is unavailable. */
+  modelBuildFallback: req("MODEL_BUILD_FALLBACK", "moonshotai/Kimi-K2.6"),
   modelChat: req("MODEL_CHAT", "Qwen/Qwen3.6-35B-A3B"),
+  /** Non-reasoning model for interview chat (avoids thinking leaks in UI). */
+  modelInterview: req("MODEL_INTERVIEW", "Qwen/Qwen2.5-72B-Instruct"),
+  /** Tiny non-reasoning model for interview tap-suggestions only. */
+  modelSuggestions: req("MODEL_SUGGESTIONS", "Qwen/Qwen2.5-72B-Instruct"),
   /** Edits run on Fireworks for speed; falls back to MODEL_BUILD on DeepInfra if unset. */
-  modelEdit: process.env.MODEL_EDIT ?? "accounts/fireworks/models/kimi-k2p6",
+  modelEdit: process.env.MODEL_EDIT ?? "accounts/fireworks/models/minimax-m2p7",
+  /** Stronger model used when BUILD_ROUTING=mixed and heal round >= 2. */
+  modelBuildEscalate: process.env.MODEL_BUILD_ESCALATE ?? "accounts/fireworks/models/kimi-k2p6",
+  /** single = one model always; mixed = escalate on heal round 2+. */
+  buildRouting: (process.env.BUILD_ROUTING ?? "mixed") === "mixed" ? "mixed" : "single",
 
   apiPort: Number(req("API_PORT", "4000")),
   proxyPort: Number(req("PROXY_PORT", "4100")),

@@ -3,6 +3,7 @@ import { getDb } from "@appable/db";
 import { requireAuth } from "./auth.js";
 import { ensureRunning, previewUrls, stopProject, undoLastChange } from "./orchestrator.js";
 import { isBuilding } from "./agent/loop.js";
+import { ensureProjectSpec } from "./interview.js";
 
 export async function projectRoutes(app: FastifyInstance): Promise<void> {
   app.addHook("preHandler", requireAuth);
@@ -83,6 +84,21 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
     }
     const count = await db.checkpoint.count({ where: { projectId: project.id } });
     return { ok: true, canUndo: count >= 2 };
+  });
+
+  /** Create the app plan from the interview if it is still missing. */
+  app.post<{ Params: { id: string } }>("/projects/:id/spec/ensure", async (req, reply) => {
+    const db = getDb();
+    const project = await db.project.findUnique({ where: { id: req.params.id } });
+    if (!project || project.userId !== req.user.userId) {
+      return reply.code(404).send({ error: "Project not found" });
+    }
+    const ready = await ensureProjectSpec(project.id);
+    const updated = await db.project.findUnique({
+      where: { id: project.id },
+      include: { specs: { orderBy: { version: "desc" }, take: 1 } },
+    });
+    return { ready, spec: updated?.specs[0]?.data ?? null };
   });
 
   app.post<{ Params: { id: string } }>("/projects/:id/pay", async (req, reply) => {

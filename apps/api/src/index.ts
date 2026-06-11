@@ -5,6 +5,7 @@ import websocket from "@fastify/websocket";
 import { getDb } from "@appable/db";
 import { env } from "./env.js";
 import { authRoutes } from "./auth.js";
+import { ideaRoutes } from "./ideas.js";
 import { projectRoutes } from "./projects.js";
 import { wsRoutes } from "./ws.js";
 import { startIdleSweeper } from "./orchestrator.js";
@@ -34,6 +35,7 @@ async function main(): Promise<void> {
   app.get("/health", async () => ({ ok: true }));
 
   await app.register(authRoutes);
+  await app.register(ideaRoutes);
   await app.register(projectRoutes);
   await app.register(wsRoutes);
 

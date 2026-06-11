@@ -1,11 +1,11 @@
 import type { ChatTool } from "../models.js";
 import {
-  checkBundle,
   deleteProjectFile,
   execInProject,
   getProjectLogs,
   listProjectFiles,
   readProjectFile,
+  verifyApp,
   writeProjectFile,
 } from "../orchestrator.js";
 import { emit } from "../events.js";
@@ -123,19 +123,25 @@ export async function executeTool(
       return `Deleted ${path}`;
     }
     case "run_command": {
-      const result = await execInProject(projectId, ["sh", "-c", String(args.command)], {
-        timeoutMs: 180_000,
+      const command = String(args.command);
+      if (/\bexpo\s+start\b/i.test(command)) {
+        return "Metro is already running. Do not start expo again — use read_build_logs, read_file, and write_file.";
+      }
+      const result = await execInProject(projectId, ["sh", "-c", command], {
+        timeoutMs: 60_000,
       });
       return clip(
         `exit code: ${result.exitCode}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
       );
     }
     case "read_build_logs": {
-      // Trigger a real bundle compile first so errors actually surface.
-      const bundleError = await checkBundle(projectId);
+      // Force compile + preview smoke so errors actually surface.
+      const verifyError = await verifyApp(projectId);
       const logs = await getProjectLogs(projectId, 150);
       const parts = [
-        bundleError ? `BUNDLE ERROR:\n${bundleError}` : "Bundle compiled successfully.",
+        verifyError
+          ? `VERIFY ERROR:\n${verifyError}`
+          : "App verified — bundle compiles and preview loads.",
         logs ? `Recent logs:\n${logs}` : "(no logs)",
       ];
       return clip(parts.join("\n\n"));

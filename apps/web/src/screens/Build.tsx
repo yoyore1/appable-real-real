@@ -5,6 +5,11 @@ import type { Route } from "../App.js";
 import { api } from "../api.js";
 import { useProjectSocket, type ChatItem } from "../useProjectSocket.js";
 import { useChatScroll } from "../useChatScroll.js";
+import { useBuildProgress } from "../useBuildProgress.js";
+import { friendlyBuildLogLine, friendlyBuildStatus } from "../buildCopy.js";
+import { MicButton } from "../components/MicButton.js";
+import { HoverTip } from "../components/HoverTip.js";
+import { SidePanel } from "../components/SidePanel.js";
 
 interface ProjectDetail {
   id: string;
@@ -171,6 +176,17 @@ export function Build({
   const webUrl = preview?.webUrl ?? project?.preview?.webUrl ?? null;
   const expUrl = preview?.expUrl ?? project?.preview?.expUrl ?? null;
   const building = status === "building";
+  /** Only show the live preview once the initial build finished — not the empty Expo template mid-build. */
+  const showPreview =
+    Boolean(webUrl) && !building && (status === "running" || status === "sleeping");
+  const previewReady = s.preview?.status === "ready";
+  const buildProgress = useBuildProgress({
+    active: building,
+    agentStatus: s.agentStatus,
+    buildLog: s.buildLog,
+    previewReady,
+    expectedScreens: spec?.screens.length,
+  });
 
   // Auto-wake a sleeping/stale workspace (app already exists, container off).
   useEffect(() => {
@@ -187,14 +203,36 @@ export function Build({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project]);
 
-  // Autostart the first build when arriving from the overview screen.
+  // Autostart the first build when arriving from pay / overview.
   useEffect(() => {
-    if (autostart && s.connected && !startedBuild.current && status === "spec_ready") {
-      startedBuild.current = true;
-      s.send({ type: "build.start" });
-    }
+    if (!autostart || !s.connected || startedBuild.current) return;
+
+    const tryStart = (projectStatus: string) => {
+      if (projectStatus === "spec_ready" && !startedBuild.current) {
+        startedBuild.current = true;
+        s.send({ type: "build.start" });
+        return true;
+      }
+      return false;
+    };
+
+    if (tryStart(status)) return;
+
+    let cancelled = false;
+    void (async () => {
+      for (let i = 0; i < 80; i++) {
+        if (cancelled || startedBuild.current) return;
+        const p = await api<{ status: string }>(`/projects/${projectId}`);
+        if (tryStart(p.status)) return;
+        await new Promise((r) => setTimeout(r, 250));
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autostart, s.connected, status]);
+  }, [autostart, s.connected, status, projectId]);
 
   const agentBusy =
     s.agentStatus && !["idle", "done", "failed"].includes(s.agentStatus.status);
@@ -232,7 +270,10 @@ export function Build({
           My apps
         </button>
         <h1>{spec?.name ?? project?.name ?? "Your app"}</h1>
-        <span className={`badge badge-${status}`}>{statusLabel(status)}</span>
+        <span className={`badge badge-${status}`}>
+          {statusLabel(status)}
+          {building && buildProgress > 0 ? ` · ${buildProgress}%` : ""}
+        </span>
         <span className="muted small" style={{ marginLeft: "auto" }}>
           {s.connected ? (
             <>
@@ -262,10 +303,7 @@ export function Build({
 
           {tab === "build" ? (
             building || (s.buildLog.length > 0 && s.build.length === 0) ? (
-              <ActivityFeed
-                log={s.buildLog}
-                statusLine={s.agentStatus?.message}
-              />
+              <ActivityFeed log={s.buildLog} friendly={building} />
             ) : (
               <ChatPane
                 items={s.build}
@@ -293,6 +331,14 @@ export function Build({
               onKeyDown={(e) => e.key === "Enter" && sendChat()}
               disabled={tab === "build" && building}
             />
+            <MicButton
+              className="icon-btn chat-mic"
+              tip="Describe a change out loud — we'll make it."
+              disabled={tab === "build" && building}
+              onTranscript={(chunk) =>
+                setInput((prev) => (prev ? `${prev.trim()} ${chunk}` : chunk))
+              }
+            />
             <button
               className="send-btn"
               onClick={sendChat}
@@ -306,28 +352,57 @@ export function Build({
         {/* ---------- middle: phone ---------- */}
         <section className="bcol bcol-mid">
           <div className="phone-toolbar">
-            <div className={s.agentStatus?.status === "done" ? "agent-line done" : "agent-line"}>
-              {agentBusy && <span className="spin" />}
-              {s.agentStatus?.status === "done"
-                ? "It's alive. Go play with it."
-                : s.agentStatus?.message ?? "\u00a0"}
+            <div className="phone-toolbar-main">
+              <div className={s.agentStatus?.status === "done" ? "agent-line done" : "agent-line"}>
+                {agentBusy && <span className="spin" />}
+                {building
+                  ? friendlyBuildStatus(s.agentStatus, buildProgress)
+                  : s.agentStatus?.status === "done"
+                    ? "It's alive. Go play with it."
+                    : s.agentStatus?.message ?? "\u00a0"}
+              </div>
+              {building && (
+                <div className="build-progress" aria-label={`Build progress ${buildProgress}%`}>
+                  <div className="build-progress-track">
+                    <div
+                      className="build-progress-fill"
+                      style={{ width: `${buildProgress}%` }}
+                    />
+                  </div>
+                  <span className="build-progress-pct">{buildProgress}%</span>
+                </div>
+              )}
             </div>
-            {webUrl && !building && (
+            {showPreview && (
               <div className="phone-toolbar-actions">
-                <button
-                  className="btn btn-ghost edit-toggle"
-                  onClick={undo}
-                  disabled={!canUndo || undoBusy || Boolean(agentBusy)}
-                  title={canUndo ? "Undo your last change" : "Nothing to undo yet"}
+                <HoverTip
+                  text={
+                    canUndo
+                      ? "Go back to before your last change."
+                      : "Nothing to undo yet."
+                  }
+                  delayMs={1000}
                 >
-                  {undoBusy ? "Undoing…" : "Undo"}
-                </button>
-                <button
-                  className={editOn ? "btn btn-primary edit-toggle" : "btn btn-ghost edit-toggle"}
-                  onClick={() => setEditMode(!editOn)}
+                  <button
+                    className="btn btn-ghost edit-toggle"
+                    onClick={undo}
+                    disabled={!canUndo || undoBusy || Boolean(agentBusy)}
+                  >
+                    {undoBusy ? "Undoing…" : "Undo"}
+                  </button>
+                </HoverTip>
+                <HoverTip
+                  text="Tap anything on your app to change its text or colors."
+                  delayMs={1000}
+                  wide
                 >
-                  {editOn ? "Done editing" : "Tap to edit"}
-                </button>
+                  <button
+                    className={editOn ? "btn btn-primary edit-toggle" : "btn btn-ghost edit-toggle"}
+                    onClick={() => setEditMode(!editOn)}
+                  >
+                    {editOn ? "Done editing" : "Tap to edit"}
+                  </button>
+                </HoverTip>
               </div>
             )}
           </div>
@@ -336,11 +411,11 @@ export function Build({
           )}
           <div className={editOn ? "phone phone-editing" : "phone"}>
             <div className="phone-notch" />
-            {webUrl ? (
+            {showPreview ? (
               <iframe
                 key={iframeKey}
                 title="Your app"
-                src={webUrl}
+                src={webUrl!}
                 ref={iframeRef}
                 onLoad={() => postToPreview({ type: "appable:edit-mode", on: editOn })}
               />
@@ -353,6 +428,19 @@ export function Build({
                   </>
                 ) : building ? (
                   <>
+                    <div className="build-progress-ring" aria-hidden>
+                      <svg viewBox="0 0 64 64">
+                        <circle className="build-progress-ring-bg" cx="32" cy="32" r="28" />
+                        <circle
+                          className="build-progress-ring-fill"
+                          cx="32"
+                          cy="32"
+                          r="28"
+                          strokeDasharray={`${(buildProgress / 100) * 175.9} 175.9`}
+                        />
+                      </svg>
+                      <span className="build-progress-ring-pct">{buildProgress}%</span>
+                    </div>
                     <b>Your app is being born</b>
                     <span className="small">it shows up right here as it takes shape</span>
                   </>
@@ -421,46 +509,60 @@ export function Build({
 
         {/* ---------- right: phone install / plan / checklist ---------- */}
         <section className="bcol bcol-right">
-          <div className="side-card">
-            <h3>On your phone</h3>
-            {expUrl ? (
-              <>
-                <div className="qr-row">
-                  <QrBlock value={expUrl} />
-                  <ol className="expo-steps">
-                    <li>
-                      Get the free <b>Expo Go</b> app from the App Store or Google Play
-                    </li>
-                    <li>Scan this code with your phone camera</li>
-                    <li>Your app opens, for real</li>
-                  </ol>
-                </div>
+          <SidePanel
+            title="On your phone"
+            autoOpenWhen={Boolean(expUrl && showPreview)}
+            badge={expUrl && showPreview ? "Ready" : undefined}
+          >
+            {expUrl && showPreview ? (
+              <div className="expo-panel">
+                <QrBlock value={expUrl} size={168} />
+                <ol className="expo-steps">
+                  <li>
+                    <span className="expo-step-num">1</span>
+                    <span>
+                      Get <b>Expo Go</b> free from the App Store or Google Play
+                    </span>
+                  </li>
+                  <li>
+                    <span className="expo-step-num">2</span>
+                    <span>Open Expo Go and scan this code</span>
+                  </li>
+                  <li>
+                    <span className="expo-step-num">3</span>
+                    <span>Your app opens on your phone</span>
+                  </li>
+                </ol>
+                <p className="expo-footnote muted small">
+                  Or paste this link in Expo Go if scanning is tricky
+                </p>
                 <code className="exp-url">{expUrl}</code>
-              </>
+              </div>
             ) : (
-              <p className="muted small">
-                Your QR code appears here once your app is running.
+              <p className="muted small side-panel-empty">
+                Your QR code shows up here once the build finishes.
               </p>
             )}
-          </div>
+          </SidePanel>
 
           {spec && (
-            <div className="side-card">
-              <h3>App plan</h3>
+            <SidePanel
+              title="App plan"
+              badge={`${spec.screens.length} screens`}
+              badgeTone="muted"
+            >
               <div className="plan-screens">
                 {spec.screens.map((screen) => (
                   <div key={screen.name} className="plan-screen">
                     <b>{screen.name}</b>
-                    <br />
                     <span>{screen.purpose}</span>
                   </div>
                 ))}
               </div>
-            </div>
+            </SidePanel>
           )}
 
-          <div className="side-card">
-            <h3>Next steps</h3>
+          <SidePanel title="Next steps">
             <ul className="check-list">
               <ChecklistItem done label="Tell us your idea" />
               <ChecklistItem done={Boolean(spec)} label="App plan created" />
@@ -471,7 +573,7 @@ export function Build({
               <ChecklistItem done={false} label="Try it on your phone" />
               <ChecklistItem done={false} label="Ask for your first change" />
             </ul>
-          </div>
+          </SidePanel>
         </section>
       </div>
     </div>
@@ -524,24 +626,42 @@ function ChatPane({ items, empty }: { items: ChatItem[]; empty: string }) {
 
 function ActivityFeed({
   log,
-  statusLine,
+  friendly = false,
 }: {
   log: { level: string; source: string; text: string }[];
-  statusLine?: string;
+  friendly?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const lines = friendly
+    ? log
+        .map((e) => friendlyBuildLogLine(e.text, e.source) ?? (e.level === "error" ? e.text : null))
+        .filter((t): t is string => Boolean(t))
+    : log.map((e) => e.text);
+
   useEffect(() => {
     ref.current?.scrollTo({ top: ref.current.scrollHeight });
-  }, [log, statusLine]);
+  }, [lines.length, log.length]);
+
   return (
     <div className="activity" ref={ref}>
-      {log.length === 0 && <p className="muted small">Build activity will appear here...</p>}
-      {log.map((e, i) => (
-        <div key={i} className={`act-line${e.level === "error" ? " err" : ""}`}>
-          <span className="act-icon">{iconFor(e)}</span>
-          <span>{e.text.length > 220 ? `${e.text.slice(0, 220)}...` : e.text}</span>
-        </div>
-      ))}
+      {lines.length === 0 && (
+        <p className="muted small">
+          {friendly ? "Your app is taking shape..." : "Build activity will appear here..."}
+        </p>
+      )}
+      {friendly
+        ? lines.map((text, i) => (
+            <div key={i} className="act-line">
+              <span className="act-icon">✓</span>
+              <span>{text}</span>
+            </div>
+          ))
+        : log.map((e, i) => (
+            <div key={i} className={`act-line${e.level === "error" ? " err" : ""}`}>
+              <span className="act-icon">{iconFor(e)}</span>
+              <span>{e.text.length > 220 ? `${e.text.slice(0, 220)}...` : e.text}</span>
+            </div>
+          ))}
     </div>
   );
 }
@@ -563,10 +683,12 @@ function SendIcon() {
   );
 }
 
-function QrBlock({ value }: { value: string }) {
+function QrBlock({ value, size = 110 }: { value: string; size?: number }) {
   const [dataUrl, setDataUrl] = useState<string | null>(null);
   useEffect(() => {
-    QRCode.toDataURL(value, { width: 232, margin: 1 }).then(setDataUrl);
-  }, [value]);
-  return dataUrl ? <img className="qr-img" src={dataUrl} alt="Scan with Expo Go" /> : null;
+    QRCode.toDataURL(value, { width: size, margin: 1 }).then(setDataUrl);
+  }, [value, size]);
+  return dataUrl ? (
+    <img className="qr-img" style={{ width: size, height: size }} src={dataUrl} alt="Scan with Expo Go" />
+  ) : null;
 }

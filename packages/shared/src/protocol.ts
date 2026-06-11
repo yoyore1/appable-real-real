@@ -48,6 +48,7 @@ export interface PingMessage {
 
 export type ServerEvent =
   | ChatDeltaEvent
+  | ChatSuggestionsEvent
   | ChatDoneEvent
   | AgentStatusEvent
   | BuildEventEvent
@@ -65,6 +66,16 @@ export interface ChatDeltaEvent {
   conversation: "interview" | "brainstorm" | "build";
   messageId: string;
   delta: string;
+}
+
+/** Tap-to-answer suggestions shown with the assistant message. */
+export interface ChatSuggestionsEvent {
+  type: "chat.suggestions";
+  conversation: "interview" | "brainstorm" | "build";
+  messageId: string;
+  suggestions: string[];
+  /** answer = pick options for a question; wrapup = final summary actions */
+  mode?: "answer" | "wrapup";
 }
 
 /** Assistant reply finished. */

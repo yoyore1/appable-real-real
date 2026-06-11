@@ -27,11 +27,18 @@ export interface ProjectSocketState {
   interview: ChatItem[];
   brainstorm: ChatItem[];
   build: ChatItem[];
+  /** Tap-to-answer chips for the current interview question. */
+  interviewSuggestions: {
+    messageId: string;
+    items: string[];
+    mode: "answer" | "wrapup";
+  } | null;
   /** Bumps when a new checkpoint is saved (for undo button state). */
   checkpointsVersion: number;
   send: (msg: ClientMessage) => void;
   appendLocal: (kind: "interview" | "brainstorm" | "build", text: string) => void;
   seed: (kind: "interview" | "brainstorm" | "build", items: ChatItem[]) => void;
+  clearInterviewSuggestions: () => void;
 }
 
 export function useProjectSocket(projectId: string | null): ProjectSocketState {
@@ -45,6 +52,11 @@ export function useProjectSocket(projectId: string | null): ProjectSocketState {
   const [interview, setInterview] = useState<ChatItem[]>([]);
   const [brainstorm, setBrainstorm] = useState<ChatItem[]>([]);
   const [build, setBuild] = useState<ChatItem[]>([]);
+  const [interviewSuggestions, setInterviewSuggestions] = useState<{
+    messageId: string;
+    items: string[];
+    mode: "answer" | "wrapup";
+  } | null>(null);
   const [checkpointsVersion, setCheckpointsVersion] = useState(0);
 
   useEffect(() => {
@@ -56,6 +68,7 @@ export function useProjectSocket(projectId: string | null): ProjectSocketState {
     setSpec(null);
     setPreview(null);
     setAgentStatus(null);
+    setInterviewSuggestions(null);
     setCheckpointsVersion(0);
 
     const ws = new WebSocket(wsUrl(projectId));
@@ -75,6 +88,15 @@ export function useProjectSocket(projectId: string | null): ProjectSocketState {
 
     function handleEvent(event: ServerEvent): void {
       switch (event.type) {
+        case "chat.suggestions":
+          if (event.conversation === "interview") {
+            setInterviewSuggestions({
+              messageId: event.messageId,
+              items: event.suggestions,
+              mode: event.mode ?? "answer",
+            });
+          }
+          break;
         case "chat.delta": {
           const setter = pickSetter(event.conversation);
           setter((items) => {
@@ -188,6 +210,10 @@ export function useProjectSocket(projectId: string | null): ProjectSocketState {
     [],
   );
 
+  const clearInterviewSuggestions = useCallback(() => {
+    setInterviewSuggestions(null);
+  }, []);
+
   return {
     connected,
     projectStatus,
@@ -198,9 +224,11 @@ export function useProjectSocket(projectId: string | null): ProjectSocketState {
     interview,
     brainstorm,
     build,
+    interviewSuggestions,
     checkpointsVersion,
     send,
     appendLocal,
     seed,
+    clearInterviewSuggestions,
   };
 }

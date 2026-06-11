@@ -121,7 +121,10 @@ async function main() {
   }
   log("SPEC READY");
 
-  // 5. Build
+  // 5. Pay (dev mode) then build
+  await api(`/projects/${project.id}/pay`, { method: "POST", body: {} }, token);
+  log("paid (dev mode)");
+
   log("starting build...");
   ws.send(JSON.stringify({ type: "build.start" }));
   const result = await waitFor(
@@ -143,6 +146,14 @@ async function main() {
   const html = await res.text();
   if (!res.ok) throw new Error(`Preview returned ${res.status}`);
   log(`preview responded ${res.status}, ${html.length} bytes`);
+
+  const bundleRes = await fetch(`${webUrl.replace(/\/$/, "")}/index.ts.bundle?platform=web&dev=true`, {
+    signal: AbortSignal.timeout(180_000),
+  });
+  const bundle = await bundleRes.text();
+  if (!bundleRes.ok) throw new Error(`Bundle returned ${bundleRes.status}`);
+  if (bundle.length < 8000) throw new Error(`Bundle too small (${bundle.length} bytes)`);
+  log(`bundle ok, ${bundle.length} bytes`);
 
   log("E2E PASSED");
   ws.close();

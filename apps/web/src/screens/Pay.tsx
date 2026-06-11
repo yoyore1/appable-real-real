@@ -28,8 +28,8 @@ export function Pay({ go, projectId }: { go: (r: Route) => void; projectId: stri
     setBusy(true);
     setError(null);
     try {
-      // Dev mode: marks paid instantly. Swaps to Stripe Checkout later.
       await api(`/projects/${projectId}/pay`, { method: "POST" });
+      void api(`/projects/${projectId}/spec/ensure`, { method: "POST" });
       go({ name: "overview", projectId });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Payment failed - try again");

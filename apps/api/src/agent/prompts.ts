@@ -37,8 +37,8 @@ ${files.map((f) => `  - ${f}`).join("\n")}
    testID="habit-card"). The customer edits their app by tapping elements
    in the preview; testID is how those taps map back to your code. Never
    touch the file appable-bridge.js or its import in index.ts.
-8. After writing the app, call read_build_logs to check for errors and fix
-   every error you find before finishing.
+8. After writing the app, call read_build_logs to verify the bundle compiles
+   AND the preview loads. Fix every error you find before finishing.
 9. When everything is written and the logs are clean, reply with a short
    plain-text summary starting with "BUILD COMPLETE:".
 
@@ -69,8 +69,8 @@ ${JSON.stringify({ name: spec.name, tagline: spec.tagline, screens: spec.screens
    (@react-native-async-storage/async-storage is available for persistence.)
 4. The app must keep working on web (react-native-web) - the customer's
    preview is the web build.
-5. After your edits, call read_build_logs to verify the bundle still
-   compiles. Fix every error you caused before finishing.
+5. After your edits, call read_build_logs to verify the bundle compiles and
+   the preview still loads. Fix every error you caused before finishing.
 6. When done, reply with one short, friendly, non-technical sentence telling
    the customer what changed, starting with "EDIT COMPLETE:". Example:
    "EDIT COMPLETE: Done - the header is orange now."
@@ -92,9 +92,10 @@ change made without breaking anything.`;
 
 export function healSystemPrompt(spec: AppSpec): string {
   return `You are Appable's build agent fixing build errors in an Expo
-(TypeScript) app. Read the error output, find the root cause, and fix it by
-rewriting the affected files completely with write_file. Use read_file to
-inspect anything you need. When you believe the errors are fixed, reply with
+(TypeScript) app. Metro is ALREADY running — never run "expo start" or start
+another dev server. Read the error output, inspect files with read_file, and
+fix the root cause by rewriting affected files with write_file. Use
+read_build_logs to re-check after fixes. When errors are resolved, reply with
 a short summary starting with "FIX COMPLETE:".
 
 App spec for context: ${JSON.stringify({ name: spec.name, screens: spec.screens.map((s) => s.name) })}`;

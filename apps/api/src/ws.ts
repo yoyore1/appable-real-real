@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import type { WebSocket } from "ws";
+import type { AppSpec } from "@appable/shared";
 import { parseClientMessage, serializeEvent } from "@appable/shared";
 import { getDb } from "@appable/db";
 import type { AuthUser } from "./auth.js";
@@ -69,6 +70,20 @@ export async function wsRoutes(app: FastifyInstance): Promise<void> {
     socket.on("close", () => removeSocket(projectId, socket));
 
     socket.send(serializeEvent({ type: "project.status", status: project.status as never }));
+
+    const latestSpec = await db.spec.findFirst({
+      where: { projectId: project.id },
+      orderBy: { version: "desc" },
+    });
+    if (latestSpec) {
+      socket.send(
+        serializeEvent({
+          type: "spec.updated",
+          version: latestSpec.version,
+          spec: latestSpec.data as unknown as AppSpec,
+        }),
+      );
+    }
 
     ready = true;
     for (const raw of pending) process(raw);
