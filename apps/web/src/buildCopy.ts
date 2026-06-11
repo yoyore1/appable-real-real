@@ -5,7 +5,9 @@ export function friendlyBuildStatus(
   agentStatus: AgentStatusEvent | null,
   progress: number,
 ): string {
-  if (agentStatus?.status === "done") return "It's alive. Go play with it.";
+  if (agentStatus?.status === "done") {
+    return agentStatus.message?.trim() || "Your app is ready.";
+  }
 
   const phase = agentStatus?.status;
   switch (phase) {
@@ -55,4 +57,38 @@ export function friendlyBuildLogLine(text: string, source: string): string | nul
   if (source === "system" && /iteration limit|checkpoint failed/i.test(text)) return null;
   if (/tool error|failed:/i.test(text)) return "Hit a snag — fixing it";
   return null;
+}
+
+/** Plain-language label for a tap-to-edit change shown in the build chat. */
+export function friendlyTapEditMessage(changes: string[]): string {
+  const parts = changes.map(friendlyTapEditChange);
+  if (parts.length === 0) return "Made a visual change";
+  if (parts.length === 1) return parts[0]!;
+  if (parts.length === 2) return `${parts[0]} and ${parts[1]}`;
+  return `${parts.slice(0, -1).join(", ")}, and ${parts[parts.length - 1]}`;
+}
+
+function friendlyTapEditChange(change: string): string {
+  const replace = change.match(/^replace the text "(.+)" with "(.+)"$/);
+  if (replace) return `Change "${replace[1]}" to "${replace[2]}"`;
+  const textMatch = change.match(/^set the text to "(.+)"$/);
+  if (textMatch) return `Change the text to "${textMatch[1]}"`;
+  const textColorScoped = change.match(/^set the text color of "(.+)" to (#[0-9A-Fa-f]{3,8})$/u);
+  if (textColorScoped) return `Change "${textColorScoped[1]}" text color`;
+  if (change.startsWith("set the text color to ")) return "Change the text color";
+  const bgScoped = change.match(
+    /^set the background color of the container for "(.+)" to (#[0-9A-Fa-f]{3,8})$/u,
+  );
+  if (bgScoped) return `Change the ${bgScoped[1]} card background`;
+  if (change.startsWith("set the background color to ")) return "Change the background color";
+  return change;
+}
+
+/** Hide tap-to-edit internals when rendering build chat (live or from history). */
+export function formatBuildChatDisplay(text: string): string {
+  const m = text.match(
+    /^\[Tap edit\] In the app, find .+ and (.+)\. Change only (?:this element|the matching text|what was tapped)\.$/,
+  );
+  if (!m) return text;
+  return friendlyTapEditMessage(m[1].split("; ").filter(Boolean));
 }

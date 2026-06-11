@@ -13,11 +13,19 @@ interface ProjectRow {
 
 export function MyApps({ go }: { go: (r: Route) => void }) {
   const [projects, setProjects] = useState<ProjectRow[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     api<ProjectRow[]>("/projects")
-      .then(setProjects)
-      .catch(() => go({ name: "home" }));
+      .then((rows) => {
+        setProjects(rows);
+        setLoadError(null);
+      })
+      .catch((err: unknown) => {
+        const message = err instanceof Error ? err.message : "Could not load your apps";
+        setLoadError(message);
+        setProjects([]);
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -60,7 +68,16 @@ export function MyApps({ go }: { go: (r: Route) => void }) {
             <button className="app-card new-app-card" onClick={() => go({ name: "home" })}>
               New app
             </button>
-            {projects === null && <p className="muted">Loading your apps</p>}
+            {projects === null && !loadError && <p className="muted">Loading your apps</p>}
+            {loadError && (
+              <div className="app-card" style={{ cursor: "default" }}>
+                <b>Could not reach Appable</b>
+                <span className="muted small">{loadError}</span>
+                <span className="muted small">
+                  Make sure the API is running on port 4000, then refresh this page.
+                </span>
+              </div>
+            )}
             {projects?.map((p) => (
               <button key={p.id} className="app-card" onClick={() => open(p)}>
                 <b>{p.specs?.[0]?.data?.name ?? p.name}</b>

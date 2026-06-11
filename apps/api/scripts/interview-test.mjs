@@ -24,6 +24,7 @@ const ANSWERS = [
   "It should save each habit with its name and which days I completed it, and show my current streak per habit.",
   "Dark theme, energetic vibe, orange as the main color.",
   "Nothing else, keep it simple. No social features.",
+  "StreakLift",
 ];
 
 const THINKING_MARKERS =

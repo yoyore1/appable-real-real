@@ -18,18 +18,23 @@ enough to build it.
 
 Rules:
 - Ask exactly ONE question per message. Keep it short, warm and jargon-free.
-- Ask at most 6 questions total. Cover: who it's for, the 2-3 core things a
-  user does in the app, what data it shows/saves, look & feel (colors/vibe),
-  and anything unique about their idea.
+- Ask at most 6 questions total before wrapping up. Cover: who it's for, the
+  2-3 core things a user does in the app, what data it shows/saves, look &
+  feel (colors/vibe), and anything unique about their idea.
+- Your LAST question before the summary MUST ask what they'd like to name
+  their app (e.g. "What would you like to call your app?"). Do not summarize
+  until they answer the name question (or say "Let Appable pick" for it).
 - Never mention code, databases, frameworks or technical terms.
 - If the user says "Let Appable pick", choose a sensible answer to your
-  previous question for them, say what you picked in one short sentence,
-  then ask your next question.
+  previous question for them (for the name question, pick a short catchy name
+  that fits their app), say what you picked in one short sentence, then ask
+  your next question — or summarize if the name was the last question.
 - If the user picks multiple options at once (comma-separated), combine them
   into one friendly answer — they mean all of those apply.
-- When you have enough (or after 6 questions), send a final message that
-  summarizes their app in 3-5 friendly bullet points, then end the message
-  with the exact marker ${SPEC_READY_MARKER} on its own line.
+- After the app-name question is answered, send a final message that
+  summarizes their app in 3-5 friendly bullet points (include the chosen
+  name), then end the message with the exact marker ${SPEC_READY_MARKER} on
+  its own line.
 - If the user says "Let's go deeper" after the summary, ask what they'd like
   to refine and continue the interview (one question at a time) until they
   are happy, then summarize again with ${SPEC_READY_MARKER}.`;
@@ -393,12 +398,26 @@ async function deliverInterviewReply(
   }
 }
 
+function interviewContext(messages: ChatMessage[]): string {
+  const lines: string[] = [];
+  for (const m of messages) {
+    if (m.role === "system" || typeof m.content !== "string") continue;
+    const label = m.role === "user" ? "User" : "Interviewer";
+    lines.push(`${label}: ${m.content.trim()}`);
+  }
+  return lines.join("\n");
+}
+
+function isNamingQuestion(question: string): boolean {
+  return /\b(name|call|title)\b.*\b(app|it)\b|\bwhat.*\bcall\b/i.test(question);
+}
+
 async function generateSuggestions(
   messages: ChatMessage[],
   question: string,
 ): Promise<string[]> {
-  const idea =
-    messages.find((m) => m.role === "user" && typeof m.content === "string")?.content ?? "";
+  const context = interviewContext(messages);
+  const naming = isNamingQuestion(question);
 
   try {
     const choice = pickSuggestionModel();
@@ -407,16 +426,23 @@ async function generateSuggestions(
       messages: [
         {
           role: "system",
-          content: `Write 3 tap-to-answer chips for an app interview question.
+          content: naming
+            ? `Write 3 tap-to-answer chips suggesting app names for what the user is building.
+Each chip is a short app name (1-3 words) that fits their idea and vibe.
+Names must feel specific to THIS app — not generic placeholders.
+Output ONLY a JSON array of exactly 3 strings. No markdown, no explanation.`
+            : `Write 3 tap-to-answer chips for an app interview question.
 Each chip 3-10 words, plain language, directly answers the question.
+Chips must fit what the user is actually building — use details from the
+conversation, not generic filler.
 Output ONLY a JSON array of exactly 3 strings. No markdown, no explanation.`,
         },
         {
           role: "user",
-          content: `/no_think\nApp idea: ${idea}\n\nQuestion:\n${question}\n\nJSON array:`,
+          content: `/no_think\nConversation so far:\n${context}\n\nQuestion:\n${question}\n\nJSON array:`,
         },
       ],
-      maxTokens: 120,
+      maxTokens: naming ? 80 : 120,
       extraBody: NO_THINKING_BODY,
     });
 
@@ -429,7 +455,14 @@ Output ONLY a JSON array of exactly 3 strings. No markdown, no explanation.`,
     console.warn("[interview] suggestion generation failed:", err);
   }
 
-  return fallbackSuggestions(question);
+  let idea = "";
+  for (const m of messages) {
+    if (m.role === "user" && typeof m.content === "string") {
+      idea = m.content;
+      break;
+    }
+  }
+  return fallbackSuggestions(question, idea);
 }
 
 function parseSuggestionArray(content: string, reasoning: string): string[] | null {
@@ -461,21 +494,63 @@ function extractJsonStringArray(text: string): string[] | null {
   return null;
 }
 
-function fallbackSuggestions(question: string): string[] {
+function fallbackSuggestions(question: string, idea: string): string[] {
   const q = question.toLowerCase();
+  if (isNamingQuestion(question)) {
+    return nameFallbacks(idea);
+  }
   if (/who|audience|for|users|people|mainly|household/.test(q)) {
     return ["Just me and my household", "Busy parents mainly", "Pretty much anyone"];
   }
   if (/main things|does in|features|do in the app|what.*do|pick|check|track/.test(q)) {
-    return ["Plan my weekly meals", "Build my grocery list", "Save favorite recipes"];
+    return featureFallbacks(idea);
   }
   if (/look|feel|color|vibe|design|style|theme/.test(q)) {
     return ["Clean and minimal", "Warm and cozy", "Bold and colorful"];
   }
   if (/data|save|track|show|store|remember/.test(q)) {
-    return ["My favorites and history", "Weekly plans and lists", "Simple notes only"];
+    return dataFallbacks(idea);
   }
   return ["Something simple", "I'll explain in my own words", "Keep it flexible"];
+}
+
+function nameFallbacks(idea: string): string[] {
+  const lower = idea.toLowerCase();
+  if (/habit|streak|gym|workout|fitness|exercise/.test(lower)) {
+    return ["StreakLift", "GymHabits", "RepCheck"];
+  }
+  if (/meal|recipe|grocery|food|cook|kitchen/.test(lower)) {
+    return ["MealMinder", "PantryPal", "PlatePlan"];
+  }
+  if (/budget|money|expense|finance|spend/.test(lower)) {
+    return ["PennyPath", "SpendSnap", "CashCalm"];
+  }
+  if (/todo|task|project|productivity|remind/.test(lower)) {
+    return ["TaskTide", "DoneDay", "FocusFlow"];
+  }
+  return ["MyApp", "DayOne", "SimpleStart"];
+}
+
+function featureFallbacks(idea: string): string[] {
+  const lower = idea.toLowerCase();
+  if (/habit|streak|gym|workout|fitness|exercise/.test(lower)) {
+    return ["Check off daily workouts", "Track my streaks", "Add and manage habits"];
+  }
+  if (/meal|recipe|grocery|food|cook/.test(lower)) {
+    return ["Plan my weekly meals", "Build my grocery list", "Save favorite recipes"];
+  }
+  return ["Track what matters most", "See my progress at a glance", "Add and organize items"];
+}
+
+function dataFallbacks(idea: string): string[] {
+  const lower = idea.toLowerCase();
+  if (/habit|streak|gym|workout|fitness|exercise/.test(lower)) {
+    return ["Habits and daily check-ins", "Streak counts per habit", "Workout history"];
+  }
+  if (/meal|recipe|grocery|food|cook/.test(lower)) {
+    return ["Saved recipes and favorites", "Weekly meal plans", "Grocery lists"];
+  }
+  return ["My entries and history", "Lists and favorites", "Simple notes only"];
 }
 
 function parseSpecJson(text: string): AppSpec | null {

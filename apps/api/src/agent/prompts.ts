@@ -31,12 +31,12 @@ ${files.map((f) => `  - ${f}`).join("\n")}
 7. Style with StyleSheet.create. Make it look genuinely good: spacing,
    typography, the spec's color palette. The customer cannot code - the
    visual quality IS the product.
-7b. Add a testID prop to every meaningful Text, Pressable/TouchableOpacity
-   and screen container, using short kebab-case names that describe the
-   element (e.g. testID="home-title", testID="add-button",
-   testID="habit-card"). The customer edits their app by tapping elements
-   in the preview; testID is how those taps map back to your code. Never
-   touch the file appable-bridge.js or its import in index.ts.
+7b. Add a testID prop to every separate Text label and every Pressable/
+   TouchableOpacity — not just outer containers. Each visible string gets
+   its own testID (e.g. testID="home-title", testID="home-subtitle",
+   testID="section-week-title", testID="meal-day-label"). Split combined
+   text into sibling Text nodes when needed so tap-to-edit can target one
+   phrase at a time. Never touch appable-bridge.js or its import in index.ts.
 8. After writing the app, call read_build_logs to verify the bundle compiles
    AND the preview loads. Fix every error you find before finishing.
 9. When everything is written and the logs are clean, reply with a short
@@ -77,13 +77,15 @@ ${JSON.stringify({ name: spec.name, tagline: spec.tagline, screens: spec.screens
 7. If the request is impossible or unclear, do NOT guess wildly: make your
    best reasonable interpretation, or if truly impossible reply
    "EDIT COMPLETE:" with a short explanation of what you did instead.
-8. Some requests come from the customer TAPPING an element in the preview.
-   These start with "[Tap edit]" and identify the element by its testID
-   and/or its current text. Find that exact element in the code (search for
-   the testID string or the text) and change ONLY what was asked - the
-   text, the color, or the background color. If the color lives in a shared
-   StyleSheet entry used by other elements, split out a style for just this
-   element unless the request clearly means the whole theme.
+8. Some requests come from the customer TAPPING one text label in the
+   preview. These start with "[Tap edit]" and identify the element by its
+   testID and/or the exact old text. "replace the text X with Y" means
+   only that one string — never rewrite sibling labels in the same card.
+   When adding new Text, give each label its own testID. Color changes MUST be written into the
+   source (inline style on that element, or its StyleSheet entry). If the
+   color lives in a shared StyleSheet entry used by other elements, add an
+   inline override on just that element unless the request clearly means
+   the whole theme.
 9. Never touch the file appable-bridge.js or its import in index.ts.
 
 The customer cannot code and will never read the code. They just want their

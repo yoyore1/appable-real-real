@@ -6,7 +6,12 @@ import { api } from "../api.js";
 import { useProjectSocket, type ChatItem } from "../useProjectSocket.js";
 import { useChatScroll } from "../useChatScroll.js";
 import { useBuildProgress } from "../useBuildProgress.js";
-import { friendlyBuildLogLine, friendlyBuildStatus } from "../buildCopy.js";
+import {
+  formatBuildChatDisplay,
+  friendlyBuildLogLine,
+  friendlyBuildStatus,
+  friendlyTapEditMessage,
+} from "../buildCopy.js";
 import { MicButton } from "../components/MicButton.js";
 import { HoverTip } from "../components/HoverTip.js";
 import { SidePanel } from "../components/SidePanel.js";
@@ -28,13 +33,30 @@ interface DbMessage {
 }
 
 /** Element info reported by the edit bridge inside the preview iframe. */
+interface TappedTextPart {
+  text: string;
+}
+
 interface TappedElement {
   testId: string | null;
+  /** testID on the tapped text label */
+  textTestId?: string | null;
+  /** testID on the card/box around the tap */
+  boxTestId?: string | null;
+  /** Short label for scoping background edits (e.g. "Tue") */
+  anchorLabel?: string;
   text: string;
+  textParts?: TappedTextPart[];
   tag: string;
   color: string;
   backgroundColor: string;
   fontSize: string;
+}
+
+function shortTapLabel(text: string | undefined): string {
+  if (!text) return "";
+  const line = text.replace(/[\r\n]+/g, " ").replace(/\s+/g, " ").trim();
+  return line.length > 48 ? line.slice(0, 48) : line;
 }
 
 function rgbToHex(rgb: string): string {
@@ -72,7 +94,8 @@ export function Build({
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [editOn, setEditOn] = useState(false);
   const [tapped, setTapped] = useState<TappedElement | null>(null);
-  const [draftText, setDraftText] = useState("");
+  const [draftTexts, setDraftTexts] = useState<string[]>([]);
+  const [originalTexts, setOriginalTexts] = useState<string[]>([]);
   const [draftColor, setDraftColor] = useState("#000000");
   const [draftBg, setDraftBg] = useState("#ffffff");
 
@@ -91,8 +114,15 @@ export function Build({
     function onMessage(e: MessageEvent) {
       const msg = e.data as { type?: string; el?: TappedElement };
       if (msg?.type === "appable:tapped" && msg.el) {
+        const parts =
+          msg.el.textParts && msg.el.textParts.length > 0
+            ? msg.el.textParts.map((p) => p.text)
+            : msg.el.text
+              ? [msg.el.text]
+              : [];
         setTapped(msg.el);
-        setDraftText(msg.el.text);
+        setDraftTexts(parts);
+        setOriginalTexts(parts);
         setDraftColor(rgbToHex(msg.el.color));
         setDraftBg(isTransparent(msg.el.backgroundColor) ? "#ffffff" : rgbToHex(msg.el.backgroundColor));
       }
@@ -104,34 +134,70 @@ export function Build({
   function applyTapEdit() {
     if (!tapped) return;
     const changes: string[] = [];
-    const newText = draftText.trim();
+    const partUpdates: { index: number; value: string }[] = [];
 
-    if (tapped.text && newText && newText !== tapped.text.trim()) {
-      postToPreview({ type: "appable:apply", prop: "text", value: newText });
-      changes.push(`set the text to "${newText}"`);
+    for (let i = 0; i < draftTexts.length; i++) {
+      const next = draftTexts[i]?.trim() ?? "";
+      const prev = originalTexts[i]?.trim() ?? "";
+      if (next && next !== prev) {
+        partUpdates.push({ index: i, value: next });
+        changes.push(`replace the text "${prev}" with "${next}"`);
+      }
     }
+    if (partUpdates.length > 0) {
+      postToPreview({ type: "appable:apply-parts", parts: partUpdates });
+    }
+
+    const label = shortTapLabel(tapped.anchorLabel ?? originalTexts[0] ?? tapped.text);
+
     if (draftColor !== rgbToHex(tapped.color)) {
       postToPreview({ type: "appable:apply", prop: "color", value: draftColor });
-      changes.push(`set the text color to ${draftColor}`);
+      changes.push(
+        label
+          ? `set the text color of "${label}" to ${draftColor}`
+          : `set the text color to ${draftColor}`,
+      );
     }
     const origBg = isTransparent(tapped.backgroundColor) ? "#ffffff" : rgbToHex(tapped.backgroundColor);
     if (draftBg !== origBg) {
       postToPreview({ type: "appable:apply", prop: "background", value: draftBg });
-      changes.push(`set the background color to ${draftBg}`);
+      changes.push(
+        label
+          ? `set the background color of the container for "${label}" to ${draftBg}`
+          : `set the background color to ${draftBg}`,
+      );
     }
     if (changes.length === 0) {
       closeTapPanel();
       return;
     }
 
-    const target = tapped.testId
-      ? `the element with testID "${tapped.testId}"`
-      : `the ${tapped.tag} element with current text "${tapped.text.slice(0, 80)}"`;
-    const message = `[Tap edit] In the app, find ${target} and ${changes.join("; ")}. Change only this element.`;
+    const hasBg = draftBg !== origBg;
+    const hasText = partUpdates.length > 0;
+    const target =
+      hasText && tapped.textTestId
+        ? `the element with testID "${tapped.textTestId}"`
+        : hasBg && tapped.boxTestId
+          ? `the element with testID "${tapped.boxTestId}"`
+          : hasBg && tapped.textTestId
+            ? `the element with testID "${tapped.textTestId}"`
+            : hasBg && label
+              ? `the card container for "${label}"`
+              : tapped.textTestId
+                ? `the element with testID "${tapped.textTestId}"`
+                : label
+                  ? `the ${tapped.tag} element showing "${label}"`
+                  : `the ${tapped.tag} element`;
+    const message = `[Tap edit] In the app, find ${target} and ${changes.join("; ")}. Change only what was tapped.`;
+    const displayMessage = friendlyTapEditMessage(changes);
 
-    s.appendLocal("build", message);
+    s.appendLocal("build", displayMessage);
     s.send({ type: "chat.send", conversation: "build", text: message });
     closeTapPanel();
+  }
+
+  function updateDraftText(index: number, value: string) {
+    setDraftTexts((prev) => prev.map((t, i) => (i === index ? value : t)));
   }
 
   function closeTapPanel() {
@@ -152,7 +218,10 @@ export function Build({
             (m): ChatItem => ({
               id: m.id,
               role: m.role === "user" ? "user" : "assistant",
-              text: m.content,
+              text:
+                kind === "build" && m.role === "user"
+                  ? formatBuildChatDisplay(m.content)
+                  : m.content,
             }),
           ),
         ),
@@ -357,9 +426,8 @@ export function Build({
                 {agentBusy && <span className="spin" />}
                 {building
                   ? friendlyBuildStatus(s.agentStatus, buildProgress)
-                  : s.agentStatus?.status === "done"
-                    ? "It's alive. Go play with it."
-                    : s.agentStatus?.message ?? "\u00a0"}
+                  : s.agentStatus?.message?.trim() ||
+                    (s.agentStatus?.status === "done" ? "Your app is ready." : "\u00a0")}
               </div>
               {building && (
                 <div className="build-progress" aria-label={`Build progress ${buildProgress}%`}>
@@ -409,76 +477,33 @@ export function Build({
           {editOn && !tapped && (
             <p className="muted small edit-hint">Tap anything in your app to change it.</p>
           )}
-          <div className={editOn ? "phone phone-editing" : "phone"}>
-            <div className="phone-notch" />
-            {showPreview ? (
-              <iframe
-                key={iframeKey}
-                title="Your app"
-                src={webUrl!}
-                ref={iframeRef}
-                onLoad={() => postToPreview({ type: "appable:edit-mode", on: editOn })}
-              />
-            ) : (
-              <div className="phone-empty-state">
-                {starting ? (
-                  <>
-                    <b>Waking your app</b>
-                    <span className="small">about ten seconds</span>
-                  </>
-                ) : building ? (
-                  <>
-                    <div className="build-progress-ring" aria-hidden>
-                      <svg viewBox="0 0 64 64">
-                        <circle className="build-progress-ring-bg" cx="32" cy="32" r="28" />
-                        <circle
-                          className="build-progress-ring-fill"
-                          cx="32"
-                          cy="32"
-                          r="28"
-                          strokeDasharray={`${(buildProgress / 100) * 175.9} 175.9`}
-                        />
-                      </svg>
-                      <span className="build-progress-ring-pct">{buildProgress}%</span>
-                    </div>
-                    <b>Your app is being born</b>
-                    <span className="small">it shows up right here as it takes shape</span>
-                  </>
-                ) : (
-                  <>
-                    <b>Your app will appear here</b>
-                    {status === "spec_ready" && (
-                      <button
-                        className="btn btn-primary"
-                        onClick={() => s.send({ type: "build.start" })}
-                      >
-                        Build my app
-                      </button>
-                    )}
-                  </>
-                )}
-              </div>
-            )}
-          </div>
-          {building && (
-            <button className="btn btn-ghost" onClick={() => s.send({ type: "build.cancel" })}>
-              Cancel build
-            </button>
-          )}
+          <div className="phone-stage">
           {tapped && (
             <div className="edit-panel">
               <div className="edit-panel-head">
-                <b>{tapped.testId ?? (tapped.text ? `"${tapped.text.slice(0, 32)}"` : "Element")}</b>
+                <b>
+                  {shortTapLabel(tapped.anchorLabel ?? originalTexts[0] ?? tapped.text) ||
+                    tapped.boxTestId ||
+                    tapped.textTestId ||
+                    "Element"}
+                </b>
                 <button className="btn-link" onClick={closeTapPanel}>
                   Cancel
                 </button>
               </div>
-              {tapped.text && (
-                <label className="edit-field">
-                  <span>Text</span>
-                  <input value={draftText} onChange={(e) => setDraftText(e.target.value)} />
+              {draftTexts.map((part, i) => (
+                <label className="edit-field" key={`${part}-${i}`}>
+                  <span>
+                    {draftTexts.length > 1
+                      ? originalTexts[i]?.slice(0, 28) || `Text ${i + 1}`
+                      : "Text"}
+                  </span>
+                  <input
+                    value={part}
+                    onChange={(e) => updateDraftText(i, e.target.value)}
+                  />
                 </label>
-              )}
+              ))}
               <div className="edit-colors">
                 <label className="edit-field">
                   <span>Text color</span>
@@ -489,7 +514,11 @@ export function Build({
                   />
                 </label>
                 <label className="edit-field">
-                  <span>Background</span>
+                  <span>
+                    {shortTapLabel(tapped.anchorLabel ?? originalTexts[0])
+                      ? `${shortTapLabel(tapped.anchorLabel ?? originalTexts[0])} box background`
+                      : "Box background"}
+                  </span>
                   <input
                     type="color"
                     value={draftBg}
@@ -500,10 +529,82 @@ export function Build({
               <button className="btn btn-primary" onClick={applyTapEdit}>
                 Apply change
               </button>
-              <p className="muted small" style={{ margin: 0, textAlign: "center" }}>
+              <p className="muted small edit-panel-foot">
                 Shows instantly, saves in the background.
               </p>
             </div>
+          )}
+          <div className={editOn ? "phone-device phone-editing" : "phone-device"}>
+            <div className="phone-side phone-side-left" aria-hidden>
+              <span className="phone-btn phone-btn-action" />
+              <span className="phone-btn phone-btn-vol-up" />
+              <span className="phone-btn phone-btn-vol-down" />
+            </div>
+            <div className="phone">
+              <div className="phone-bezel">
+                <div className="phone-screen">
+                  <div className="phone-dynamic-island" aria-hidden />
+                  {showPreview ? (
+                    <iframe
+                      key={iframeKey}
+                      title="Your app"
+                      src={webUrl!}
+                      ref={iframeRef}
+                      onLoad={() => postToPreview({ type: "appable:edit-mode", on: editOn })}
+                    />
+                  ) : (
+                    <div className="phone-empty-state">
+                      {starting ? (
+                        <>
+                          <b>Waking your app</b>
+                          <span className="small">about ten seconds</span>
+                        </>
+                      ) : building ? (
+                        <>
+                          <div className="build-progress-ring" aria-hidden>
+                            <svg viewBox="0 0 64 64">
+                              <circle className="build-progress-ring-bg" cx="32" cy="32" r="28" />
+                              <circle
+                                className="build-progress-ring-fill"
+                                cx="32"
+                                cy="32"
+                                r="28"
+                                strokeDasharray={`${(buildProgress / 100) * 175.9} 175.9`}
+                              />
+                            </svg>
+                            <span className="build-progress-ring-pct">{buildProgress}%</span>
+                          </div>
+                          <b>Your app is being born</b>
+                          <span className="small">it shows up right here as it takes shape</span>
+                        </>
+                      ) : (
+                        <>
+                          <b>Your app will appear here</b>
+                          {status === "spec_ready" && (
+                            <button
+                              className="btn btn-primary"
+                              onClick={() => s.send({ type: "build.start" })}
+                            >
+                              Build my app
+                            </button>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+            <div className="phone-side phone-side-right" aria-hidden>
+              <span className="phone-btn phone-btn-power" />
+            </div>
+            <div className="phone-shadow" aria-hidden />
+          </div>
+          </div>
+          {building && (
+            <button className="btn btn-ghost" onClick={() => s.send({ type: "build.cancel" })}>
+              Cancel build
+            </button>
           )}
         </section>
 
@@ -616,7 +717,7 @@ function ChatPane({ items, empty }: { items: ChatItem[]; empty: string }) {
       {items.length === 0 && <p className="muted small">{empty}</p>}
       {items.map((m) => (
         <div key={m.id} className={`imsg ${m.role === "user" ? "me" : "them"}`}>
-          {m.text.trim()}
+          {(m.role === "user" ? formatBuildChatDisplay(m.text) : m.text).trim()}
           {m.streaming ? "▌" : ""}
         </div>
       ))}

@@ -22,6 +22,7 @@ import {
   verifyApp,
 } from "../orchestrator.js";
 import { buildSystemPrompt, editSystemPrompt, healSystemPrompt } from "./prompts.js";
+import { tryTapEditPatch } from "./tapEdit.js";
 import { agentTools, executeTool } from "./tools.js";
 
 const MAX_ITERATIONS = 80;
@@ -238,6 +239,31 @@ export async function runEdit(projectId: string, request: string): Promise<void>
     // Safety net: remember exactly where we started.
     safeRef = await getHeadRef(projectId);
 
+    // Tap-to-edit color changes only touch the preview DOM via the bridge;
+    // patch source directly so the change survives reload.
+    if (request.startsWith("[Tap edit]")) {
+      const tapPatch = await tryTapEditPatch(projectId, request);
+      if (tapPatch.ok) {
+        status(projectId, "checking", "Making sure your app still loads...");
+        const verifyError = await verifyApp(projectId);
+        if (verifyError) {
+          await resetToGitRef(projectId, safeRef);
+          await sendEditReply(
+            projectId,
+            conversation.id,
+            "I couldn't apply that change without breaking your app, so I left everything as it was.",
+            "tap-edit",
+          );
+          status(projectId, "idle", "Change rolled back - your app is untouched.");
+          return;
+        }
+        await createCheckpoint(projectId, `edit: ${request.slice(0, 60)}`).catch(() => {});
+        await sendEditReply(projectId, conversation.id, tapPatch.summary, "tap-edit");
+        status(projectId, "done", "Change saved.");
+        return;
+      }
+    }
+
     const files = await listProjectFiles(projectId);
     const choice = pickModel("edit");
     const messages: ChatMessage[] = [
@@ -296,7 +322,7 @@ export async function runEdit(projectId: string, request: string): Promise<void>
     if (!finished && !summary) summary = "Done - your change is in!";
 
     await sendEditReply(projectId, conversation.id, summary || "Done - your change is in!", choice.model);
-    status(projectId, "done", "Change complete!");
+    status(projectId, "done", "Change saved.");
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await logBuild(projectId, "error", "system", `Edit failed: ${message}`);

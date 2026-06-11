@@ -1724,13 +1724,23 @@ textarea:focus {
   color: var(--paper);
 }
 
-/* phone */
+/* phone — iPhone 15 Pro frame */
 
 .bcol-mid {
   align-items: center;
   justify-content: flex-start;
   gap: 12px;
   overflow-y: auto;
+}
+
+.phone-stage {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  flex-shrink: 0;
+  max-width: 100%;
 }
 
 .agent-line {
@@ -1766,35 +1776,143 @@ textarea:focus {
   }
 }
 
-.phone {
-  width: 340px;
-  height: 650px;
-  border-radius: 44px;
-  border: 10px solid var(--ink);
-  background: #fff;
-  overflow: hidden;
+.phone-device {
+  --phone-w: 340px;
+  --phone-h: 698px;
   position: relative;
   flex-shrink: 0;
-  box-shadow: 0 24px 48px -24px rgba(28, 24, 20, 0.3);
+  padding: 0 5px 14px;
   animation: rise 0.55s cubic-bezier(0.2, 0.7, 0.3, 1) both;
+}
+
+.phone-shadow {
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  width: 82%;
+  height: 14px;
+  transform: translateX(-50%);
+  background: radial-gradient(ellipse, rgba(20, 18, 16, 0.22) 0%, transparent 70%);
+  filter: blur(5px);
+  pointer-events: none;
+}
+
+.phone {
+  width: var(--phone-w);
+  height: var(--phone-h);
+  border-radius: 54px;
+  padding: 2px;
+  background: linear-gradient(
+    155deg,
+    #6b6b70 0%,
+    #434348 18%,
+    #2a2a2f 42%,
+    #1c1c21 58%,
+    #323238 78%,
+    #52525a 100%
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    inset 0 -1px 2px rgba(0, 0, 0, 0.35),
+    0 16px 40px -14px rgba(0, 0, 0, 0.35);
+  position: relative;
+  overflow: visible;
+}
+
+.phone-bezel {
+  width: 100%;
+  height: 100%;
+  border-radius: 52px;
+  padding: 9px;
+  background: linear-gradient(180deg, #0a0a0c 0%, #000 100%);
+  overflow: hidden;
+}
+
+.phone-screen {
+  width: 100%;
+  height: 100%;
+  border-radius: 44px;
+  overflow: hidden;
+  position: relative;
+  background: #fff;
 }
 
 .phone iframe {
   width: 100%;
   height: 100%;
   border: none;
+  display: block;
 }
 
-.phone-notch {
+.phone-dynamic-island {
   position: absolute;
-  top: 8px;
+  top: 10px;
   left: 50%;
   transform: translateX(-50%);
-  width: 88px;
-  height: 20px;
-  background: var(--ink);
-  border-radius: 99px;
+  width: 98px;
+  height: 30px;
+  background: #000;
+  border-radius: 18px;
+  z-index: 5;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.04),
+    inset 0 -1px 2px rgba(0, 0, 0, 0.6);
+}
+
+.phone-side {
+  position: absolute;
+  top: 0;
+  bottom: 14px;
+  width: 0;
+  pointer-events: none;
   z-index: 2;
+}
+
+.phone-side-left {
+  left: 0;
+}
+
+.phone-side-right {
+  right: 0;
+}
+
+.phone-btn {
+  position: absolute;
+  border-radius: 3px;
+  background: linear-gradient(180deg, #5e5e64 0%, #3a3a40 45%, #2a2a30 100%);
+  box-shadow:
+    -1px 0 3px rgba(0, 0, 0, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.3);
+}
+
+.phone-btn-action {
+  left: -2px;
+  top: 128px;
+  width: 3px;
+  height: 22px;
+  border-radius: 4px;
+}
+
+.phone-btn-vol-up {
+  left: -2px;
+  top: 172px;
+  width: 3px;
+  height: 38px;
+}
+
+.phone-btn-vol-down {
+  left: -2px;
+  top: 220px;
+  width: 3px;
+  height: 38px;
+}
+
+.phone-btn-power {
+  right: -2px;
+  top: 178px;
+  width: 3px;
+  height: 52px;
 }
 
 .phone-empty-state {
@@ -1823,7 +1941,7 @@ textarea:focus {
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
-  width: 340px;
+  width: 350px;
 }
 
 .phone-toolbar-main {
@@ -1919,12 +2037,18 @@ textarea:focus {
   margin: 0;
 }
 
-.phone-editing {
-  box-shadow: 0 0 0 3px var(--accent-tint), 0 24px 48px -24px rgba(28, 24, 20, 0.3);
+.phone-device.phone-editing .phone {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    inset 0 -1px 2px rgba(0, 0, 0, 0.35),
+    0 0 0 3px var(--accent-tint),
+    0 16px 40px -14px rgba(0, 0, 0, 0.35);
 }
 
 .edit-panel {
-  width: 340px;
+  width: 240px;
+  flex-shrink: 0;
+  align-self: center;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
@@ -1933,6 +2057,13 @@ textarea:focus {
   flex-direction: column;
   gap: 12px;
   animation: pop-in 0.18s ease;
+  box-shadow: 0 8px 28px -8px rgba(20, 18, 16, 0.12);
+}
+
+.edit-panel-foot {
+  margin: 0;
+  text-align: center;
+  line-height: 1.35;
 }
 
 .edit-panel-head {
@@ -1974,6 +2105,7 @@ textarea:focus {
 
 .edit-colors {
   display: flex;
+  flex-direction: column;
   gap: 10px;
 }
 
