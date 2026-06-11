@@ -31,12 +31,30 @@ ${files.map((f) => `  - ${f}`).join("\n")}
 7. Style with StyleSheet.create. Make it look genuinely good: spacing,
    typography, the spec's color palette. The customer cannot code - the
    visual quality IS the product.
-7b. Add a testID prop to every separate Text label and every Pressable/
-   TouchableOpacity — not just outer containers. Each visible string gets
-   its own testID (e.g. testID="home-title", testID="home-subtitle",
-   testID="section-week-title", testID="meal-day-label"). Split combined
-   text into sibling Text nodes when needed so tap-to-edit can target one
-   phrase at a time. Never touch appable-bridge.js or its import in index.ts.
+7b. TAP-TO-EDIT CONTRACT — applies to ALL editable UI (lists, cards, tabs,
+   settings rows, product tiles, todos, recipes, prices, dates, buttons, etc.;
+   not only calendars or "day" labels):
+   - Every user-visible Text gets its own testID — never rely on a parent
+     ScrollView/screen testID alone. Split combined copy into sibling Text
+     nodes (title / subtitle / price / button label each separate).
+   - Icons (emoji or @expo/vector-icons) live in their own sibling element
+     with a testID — never icon + label in one Text node.
+   - ANY .map() or repeated component (whatever the item key: id, slug, name,
+     date, sku): testID on the ROW container AND on each inner Text, sharing
+     a stable suffix, e.g. testID={\`recipe-\${recipe.id}\`} on the card and
+     testID={\`recipe-\${recipe.id}-title\`} on the title Text; same pattern
+     for todos, products, settings toggles, nav tabs, chat messages, etc.
+   - Shared card/row components: accept a stable id prop (itemId, slug, key…)
+     and derive testIDs from it on the outer Pressable/TouchableOpacity AND
+     every inner Text. Never testID only on the wrapper.
+   - Prop-driven labels ({title}, {name}, {price}): the Text still needs its
+     own testID tied to that item id — preview shows runtime text but edits
+     must target one row. Prefer literal strings when copy is fixed ("Save",
+     section headings from the spec).
+   - Colors/backgrounds the user might change: on THAT Text or container
+     (inline override or dedicated style key), not one shared StyleSheet
+     entry reused by siblings that should look different.
+   - Never touch appable-bridge.js or its import in index.ts.
 8. After writing the app, call read_build_logs to verify the bundle compiles
    AND the preview loads. Fix every error you find before finishing.
 9. When everything is written and the logs are clean, reply with a short
@@ -77,15 +95,13 @@ ${JSON.stringify({ name: spec.name, tagline: spec.tagline, screens: spec.screens
 7. If the request is impossible or unclear, do NOT guess wildly: make your
    best reasonable interpretation, or if truly impossible reply
    "EDIT COMPLETE:" with a short explanation of what you did instead.
-8. Some requests come from the customer TAPPING one text label in the
-   preview. These start with "[Tap edit]" and identify the element by its
-   testID and/or the exact old text. "replace the text X with Y" means
-   only that one string — never rewrite sibling labels in the same card.
-   When adding new Text, give each label its own testID. Color changes MUST be written into the
-   source (inline style on that element, or its StyleSheet entry). If the
-   color lives in a shared StyleSheet entry used by other elements, add an
-   inline override on just that element unless the request clearly means
-   the whole theme.
+8. Some requests come from the customer TAPPING the preview ("[Tap edit]").
+   Honor testID + old text scope — change only that label/card. When adding
+   or touching Text, keep the tap-to-edit contract (rule 7b): own testID per
+   label, testIDs on mapped rows, literal or testID-tagged {item} text.
+   Color changes go on that specific Text or container (inline override), not
+   a shared StyleSheet entry other siblings reuse unless the whole theme
+   should change.
 9. Never touch the file appable-bridge.js or its import in index.ts.
 
 The customer cannot code and will never read the code. They just want their
@@ -101,4 +117,26 @@ read_build_logs to re-check after fixes. When errors are resolved, reply with
 a short summary starting with "FIX COMPLETE:".
 
 App spec for context: ${JSON.stringify({ name: spec.name, screens: spec.screens.map((s) => s.name) })}`;
+}
+
+/** Post-build pass: add missing testIDs so tap-to-edit works on every label. */
+export function tapEditHealSystemPrompt(spec: AppSpec): string {
+  return `You are Appable's build agent finishing tap-to-edit readiness for an
+Expo (TypeScript) app. Metro is ALREADY running — do not start expo again.
+
+The audit found Text nodes and/or list rows MISSING testID props. Add them
+now with the SMALLEST possible edits — do not refactor unrelated code.
+
+## Tap-to-edit contract (rule 7b from the build)
+- Every user-visible Text needs its own testID (kebab-case, stable, unique).
+- .map() rows: testID on the row Pressable/TouchableOpacity AND on each inner
+  Text (e.g. testID={\`item-\${item.id}\`} and testID={\`item-\${item.id}-title\`}).
+- Put icons in sibling elements with their own testID — never icon+label in one Text.
+- Do not change copy, layout, colors, or business logic — only add testID props.
+- Never touch appable-bridge.js or its import in index.ts.
+
+Use read_file / write_file. Call read_build_logs when done. Reply starting with
+"FIX COMPLETE:" and a one-line summary.
+
+App: ${JSON.stringify({ name: spec.name, screens: spec.screens.map((s) => s.name) })}`;
 }

@@ -260,7 +260,7 @@ function urlsToEvent(urls: PreviewInfo): { webUrl: string; expUrl: string } {
  * reports which element the user tapped, and applies instant text/color
  * changes while the real edit runs in the background. Inert on native.
  */
-const EDIT_BRIDGE_SOURCE = `/* Appable edit bridge - auto-generated, do not edit. v7 */
+const EDIT_BRIDGE_SOURCE = `/* Appable edit bridge - auto-generated, do not edit. v10 */
 /* eslint-disable */
 if (
   typeof document !== "undefined" &&
@@ -283,14 +283,46 @@ if (
   var lastHighlight = null;
   var lastOutline = "";
   var lastPartEls = [];
+  var lastPartIsIcon = [];
   var lastStyleEl = null;
   var lastBgEl = null;
 
+  var BROAD_TEST_IDS = {
+    screen: 1,
+    scroll: 1,
+    scrollview: 1,
+    root: 1,
+    layout: 1,
+    wrapper: 1,
+    container: 1,
+    page: 1,
+    app: 1,
+    content: 1,
+    section: 1,
+    header: 1,
+    "home-screen": 1,
+    "home-scroll": 1,
+    "home-root": 1,
+    "home-layout": 1,
+    "home-wrapper": 1,
+    "home-container": 1,
+    "home-page": 1,
+    "home-content": 1,
+    "home-section": 1,
+    "home-header": 1,
+  };
+
   function isBroadTestId(id) {
     if (!id) return true;
-    return /(?:^|_|-)(screen|scroll|root|layout|wrapper|container|page|home|app|content|section|header)(?:$|_|-)/i.test(
-      id,
-    );
+    var lower = String(id).toLowerCase();
+    if (BROAD_TEST_IDS[lower]) return true;
+    if (/^home-(screen|scroll|root|layout|wrapper|container|page|content|section|header)/.test(lower)) {
+      return true;
+    }
+    if (/-(screen|scrollview|scroll-view|root|layout|wrapper|container|page)$/.test(lower)) {
+      return true;
+    }
+    return false;
   }
 
   function testIdOn(el) {
@@ -358,6 +390,62 @@ if (
       if (lbl) return lbl;
     }
     return "";
+  }
+
+  function iconDisplayText(el) {
+    var t = shortLabel(el.innerText || el.textContent || "");
+    return t || "icon";
+  }
+
+  function isIconLike(el) {
+    if (!el || el.nodeType !== 1) return false;
+    var tag = (el.tagName || "").toLowerCase();
+    if (tag === "svg" || (el.querySelector && el.querySelector("svg"))) return true;
+    var r = el.getBoundingClientRect();
+    if (!r.width || !r.height) return false;
+    if (r.width > 80 || r.height > 80) return false;
+    try {
+      var ff = (window.getComputedStyle(el).fontFamily || "").toLowerCase();
+      if (/ionicons|material icons|materialicons|fontawesome|anticon|feather|expo|glyph|icon/.test(ff)) {
+        return true;
+      }
+    } catch (_e) {}
+    var text = (el.innerText || el.textContent || "").trim();
+    if (!text) return r.width < 64 && r.height < 64;
+    if (text.length <= 2 && /[\\p{Extended_Pictographic}\\p{So}]/u.test(text)) return true;
+    if (text.length === 1 && !/[a-zA-Z0-9]/.test(text)) return true;
+    return false;
+  }
+
+  function collectEditableParts(root) {
+    var parts = [];
+    var used = [];
+    function add(el, text, isIcon) {
+      if (!el || used.indexOf(el) >= 0) return;
+      used.push(el);
+      parts.push({ text: text, el: el, isIcon: isIcon });
+    }
+    function walk(el) {
+      if (!el || !root.contains(el)) return;
+      if (isIconLike(el)) {
+        add(el, iconDisplayText(el), true);
+        return;
+      }
+      var lbl = leafTextLabel(el);
+      if (lbl) {
+        var textKids = 0;
+        for (var i = 0; i < el.children.length; i++) {
+          if ((el.children[i].innerText || "").trim()) textKids++;
+        }
+        if (textKids === 0) {
+          add(el, lbl, false);
+          return;
+        }
+      }
+      for (var j = 0; j < el.children.length; j++) walk(el.children[j]);
+    }
+    walk(root);
+    return parts;
   }
 
   function resolveTextTarget(el, x, y) {
@@ -477,20 +565,68 @@ if (
     if (!bgEl && clickEl) bgEl = pickCardContainer(clickEl, x, y);
     if (!bgEl) return null;
 
+    var hitIcon = null;
+    for (var hi = 0; hi < stack.length; hi++) {
+      if (bgEl.contains(stack[hi]) && isIconLike(stack[hi])) {
+        hitIcon = stack[hi];
+        break;
+      }
+    }
+
+    var parts = [];
     var boxLabel = firstLabelIn(bgEl);
     var styleEl = bestResolved ? bestResolved.el : bgEl;
+
+    if (hitIcon) {
+      styleEl = hitIcon;
+      bestResolved = { el: hitIcon, text: iconDisplayText(hitIcon) };
+      parts = [{ text: iconDisplayText(hitIcon), el: hitIcon, isIcon: true }];
+    } else {
+      var allParts = collectEditableParts(bgEl);
+      if (allParts.length > 1) {
+        parts = allParts;
+        if (bestResolved) {
+          var found = false;
+          for (var pi = 0; pi < allParts.length; pi++) {
+            if (allParts[pi].el === bestResolved.el) found = true;
+          }
+          if (!found) {
+            parts = [
+              {
+                text: bestResolved.text,
+                el: bestResolved.el,
+                isIcon: isIconLike(bestResolved.el),
+              },
+            ];
+          }
+        }
+      } else if (bestResolved) {
+        parts = [
+          {
+            text: bestResolved.text,
+            el: bestResolved.el,
+            isIcon: isIconLike(bestResolved.el),
+          },
+        ];
+      } else if (allParts.length === 1) {
+        parts = allParts;
+        styleEl = allParts[0].el;
+        bestResolved = { el: allParts[0].el, text: allParts[0].text };
+      } else if (boxLabel) {
+        parts = [{ text: boxLabel, el: styleEl, isIcon: false }];
+      } else {
+        parts = [{ text: "", el: styleEl, isIcon: false }];
+      }
+    }
+
     var textTestId = findNearestTestId(styleEl);
     var boxTestId = findNearestTestId(bgEl);
     if (boxTestId && isBroadTestId(boxTestId)) boxTestId = null;
     var anchor = bestResolved ? bestResolved.text : boxLabel;
     return {
       root: styleEl,
-      parts: bestResolved
-        ? [{ text: bestResolved.text, el: bestResolved.el }]
-        : boxLabel
-          ? [{ text: boxLabel, el: styleEl }]
-          : [{ text: "", el: styleEl }],
-      anchorLabel: shortLabel(anchor),
+      parts: parts,
+      anchorLabel: shortLabel(hitIcon ? boxLabel || anchor : anchor || boxLabel),
       textTestId: textTestId,
       boxTestId: boxTestId,
       testId: boxTestId || textTestId,
@@ -511,7 +647,7 @@ if (
       anchorLabel: pick.anchorLabel || shortLabel(pick.parts[0] && pick.parts[0].text),
       text: pick.parts.length === 1 ? pick.parts[0].text : "",
       textParts: pick.parts.map(function (p) {
-        return { text: p.text };
+        return { text: p.text, isIcon: Boolean(p.isIcon) };
       }),
       tag: styleEl.tagName ? styleEl.tagName.toLowerCase() : "",
       color: cs.color,
@@ -520,12 +656,17 @@ if (
     };
   }
 
-  function clearHighlight() {
+  function clearOutlineOnly() {
     if (lastHighlight) {
       lastHighlight.style.outline = lastOutline;
       lastHighlight = null;
     }
+  }
+
+  function clearHighlight() {
+    clearOutlineOnly();
     lastPartEls = [];
+    lastPartIsIcon = [];
     lastStyleEl = null;
     lastBgEl = null;
   }
@@ -541,11 +682,24 @@ if (
       for (var i = 0; i < items.length; i++) {
         var idx = items[i].index;
         var val = items[i].value;
-        if (lastPartEls[idx]) lastPartEls[idx].innerText = val;
+        var el = lastPartEls[idx];
+        if (!el) continue;
+        if (lastPartIsIcon[idx] && !String(val || "").trim()) {
+          el.style.display = "none";
+        } else {
+          el.style.display = "";
+          if (lastPartIsIcon[idx]) {
+            if (val) el.innerText = val;
+          } else {
+            el.innerText = val;
+          }
+        }
       }
     } else if (msg.type === "appable:apply" && lastStyleEl) {
       if (msg.prop === "color") lastStyleEl.style.color = msg.value;
       else if (msg.prop === "background" && lastBgEl) lastBgEl.style.backgroundColor = msg.value;
+    } else if (msg.type === "appable:clear-outline") {
+      clearOutlineOnly();
     } else if (msg.type === "appable:clear") {
       clearHighlight();
     }
@@ -563,6 +717,9 @@ if (
       lastHighlight = pick.bgEl || pick.root;
       lastPartEls = pick.parts.map(function (p) {
         return p.el;
+      });
+      lastPartIsIcon = pick.parts.map(function (p) {
+        return Boolean(p.isIcon);
       });
       lastStyleEl = pick.styleEl;
       lastBgEl = pick.bgEl;
@@ -787,9 +944,8 @@ export async function checkBundle(projectId: string): Promise<string | null> {
     const body = await res.text();
     if (!res.ok) return parseBundleErrorBody(body, res.status);
     return inspectBundleBody(body);
-  } catch {
-    // Metro unreachable or bundle took too long; log-based detection still applies.
-    return null;
+  } catch (err) {
+    return `Bundle check failed: ${err instanceof Error ? err.message : String(err)}`;
   }
 }
 
@@ -896,8 +1052,13 @@ export async function restoreCheckpoint(projectId: string, checkpointId: string)
   const db = getDb();
   const checkpoint = await db.checkpoint.findUniqueOrThrow({ where: { id: checkpointId } });
   if (checkpoint.projectId !== projectId) throw new Error("Checkpoint does not belong to project");
-  const result = await execInProject(projectId, ["git", "reset", "--hard", checkpoint.gitRef]);
-  if (result.exitCode !== 0) throw new Error(`git reset failed: ${result.stderr}`);
+  await resetToGitRef(projectId, checkpoint.gitRef);
+}
+
+/** Nudge Metro to rebundle after git reset (watchers often miss `git reset`). */
+export async function invalidateMetroBundle(projectId: string): Promise<void> {
+  await execInProject(projectId, ["touch", "index.ts"]).catch(() => {});
+  await execInProject(projectId, ["touch", "appable-bridge.js"]).catch(() => {});
 }
 
 /**
@@ -915,9 +1076,16 @@ export async function undoLastChange(projectId: string): Promise<boolean> {
 
   const [latest, previous] = checkpoints;
   await ensureRunning(projectId);
-  await restoreCheckpoint(projectId, previous.id);
+
+  // Drop uncommitted tap-to-edit writes (preview DOM can change before git commits).
+  await execInProject(projectId, ["git", "reset", "--hard"]);
+  await execInProject(projectId, ["git", "clean", "-fd"]);
+
+  await resetToGitRef(projectId, previous.gitRef);
+  await invalidateMetroBundle(projectId);
   await db.checkpoint.delete({ where: { id: latest.id } });
   await touch(projectId);
+  emit(projectId, { type: "checkpoint.created", checkpointId: previous.id, label: "undo" });
   emit(projectId, {
     type: "build.event",
     level: "info",

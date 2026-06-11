@@ -68,10 +68,37 @@ export function friendlyTapEditMessage(changes: string[]): string {
   return `${parts.slice(0, -1).join(", ")}, and ${parts[parts.length - 1]}`;
 }
 
+function isLikelyIconOrEmoji(text: string): boolean {
+  const t = text.trim();
+  if (!t || t === "icon") return true;
+  if (t.length <= 2 && /\p{Extended_Pictographic}|\p{So}/u.test(t)) return true;
+  return t.length === 1 && !/[a-zA-Z0-9]/.test(t);
+}
+
+function stripEmojiForDisplay(text: string): string {
+  return text
+    .replace(/\p{Extended_Pictographic}/gu, "")
+    .replace(/\uFE0F/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function friendlyTapEditChange(change: string): string {
-  const replace = change.match(/^replace the text "(.+)" with "(.+)"$/);
-  if (replace) return `Change "${replace[1]}" to "${replace[2]}"`;
-  const textMatch = change.match(/^set the text to "(.+)"$/);
+  const removeIcon = change.match(/^remove the icon from the container for "(.+)"$/u);
+  if (removeIcon) return `Remove the icon from "${removeIcon[1]}"`;
+  if (change === "remove the icon from this element") return "Remove the icon";
+  const replace = change.match(/^replace the text "(.+)" with "(.*)"$/u);
+  if (replace) {
+    if (!replace[2]) {
+      if (isLikelyIconOrEmoji(replace[1])) return "Remove the icon";
+      if (stripEmojiForDisplay(replace[1]) !== replace[1].trim()) {
+        return `Remove emoji from "${stripEmojiForDisplay(replace[1])}"`;
+      }
+      return `Remove "${replace[1]}"`;
+    }
+    return `Change "${replace[1]}" to "${replace[2]}"`;
+  }
+  const textMatch = change.match(/^set the text to "(.*)"$/u);
   if (textMatch) return `Change the text to "${textMatch[1]}"`;
   const textColorScoped = change.match(/^set the text color of "(.+)" to (#[0-9A-Fa-f]{3,8})$/u);
   if (textColorScoped) return `Change "${textColorScoped[1]}" text color`;

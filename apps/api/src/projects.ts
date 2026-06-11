@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { getDb } from "@appable/db";
 import { requireAuth } from "./auth.js";
 import { ensureRunning, previewUrls, stopProject, undoLastChange } from "./orchestrator.js";
-import { isBuilding } from "./agent/loop.js";
+import { cancelBuild, isBuilding } from "./agent/loop.js";
 import { ensureProjectSpec } from "./interview.js";
 
 export async function projectRoutes(app: FastifyInstance): Promise<void> {
@@ -78,6 +78,7 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
     if (isBuilding(project.id)) {
       return reply.code(409).send({ error: "Wait until the current change finishes" });
     }
+    cancelBuild(project.id);
     const ok = await undoLastChange(project.id);
     if (!ok) {
       return reply.code(400).send({ error: "Nothing to undo yet" });

@@ -35,6 +35,7 @@ interface DbMessage {
 /** Element info reported by the edit bridge inside the preview iframe. */
 interface TappedTextPart {
   text: string;
+  isIcon?: boolean;
 }
 
 interface TappedElement {
@@ -89,6 +90,7 @@ export function Build({
   const [canUndo, setCanUndo] = useState(false);
   const [undoBusy, setUndoBusy] = useState(false);
   const [iframeKey, setIframeKey] = useState(0);
+  const [previewNonce, setPreviewNonce] = useState(0);
 
   // --- tap-to-edit state ---
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -96,6 +98,7 @@ export function Build({
   const [tapped, setTapped] = useState<TappedElement | null>(null);
   const [draftTexts, setDraftTexts] = useState<string[]>([]);
   const [originalTexts, setOriginalTexts] = useState<string[]>([]);
+  const [partIsIcon, setPartIsIcon] = useState<boolean[]>([]);
   const [draftColor, setDraftColor] = useState("#000000");
   const [draftBg, setDraftBg] = useState("#ffffff");
 
@@ -123,6 +126,9 @@ export function Build({
         setTapped(msg.el);
         setDraftTexts(parts);
         setOriginalTexts(parts);
+        setPartIsIcon(
+          msg.el.textParts?.map((p) => Boolean(p.isIcon)) ?? parts.map(() => false),
+        );
         setDraftColor(rgbToHex(msg.el.color));
         setDraftBg(isTransparent(msg.el.backgroundColor) ? "#ffffff" : rgbToHex(msg.el.backgroundColor));
       }
@@ -135,21 +141,28 @@ export function Build({
     if (!tapped) return;
     const changes: string[] = [];
     const partUpdates: { index: number; value: string }[] = [];
+    const label =
+      originalTexts.find((t, i) => !partIsIcon[i] && t.trim())?.trim() ||
+      shortTapLabel(tapped.anchorLabel ?? originalTexts[0] ?? tapped.text);
 
     for (let i = 0; i < draftTexts.length; i++) {
-      const next = draftTexts[i]?.trim() ?? "";
-      const prev = originalTexts[i]?.trim() ?? "";
-      if (next && next !== prev) {
-        partUpdates.push({ index: i, value: next });
+      const next = draftTexts[i] ?? "";
+      const prev = originalTexts[i] ?? "";
+      if (next === prev) continue;
+      partUpdates.push({ index: i, value: next });
+      if (!next.trim() && partIsIcon[i]) {
+        changes.push(
+          label
+            ? `remove the icon from the container for "${label}"`
+            : `remove the icon from this element`,
+        );
+      } else {
         changes.push(`replace the text "${prev}" with "${next}"`);
       }
     }
     if (partUpdates.length > 0) {
       postToPreview({ type: "appable:apply-parts", parts: partUpdates });
     }
-
-    const label = shortTapLabel(tapped.anchorLabel ?? originalTexts[0] ?? tapped.text);
-
     if (draftColor !== rgbToHex(tapped.color)) {
       postToPreview({ type: "appable:apply", prop: "color", value: draftColor });
       changes.push(
@@ -173,35 +186,48 @@ export function Build({
     }
 
     const hasBg = draftBg !== origBg;
+    const hasColor = draftColor !== rgbToHex(tapped.color);
     const hasText = partUpdates.length > 0;
     const target =
       hasText && tapped.textTestId
         ? `the element with testID "${tapped.textTestId}"`
-        : hasBg && tapped.boxTestId
-          ? `the element with testID "${tapped.boxTestId}"`
-          : hasBg && tapped.textTestId
-            ? `the element with testID "${tapped.textTestId}"`
-            : hasBg && label
-              ? `the card container for "${label}"`
-              : tapped.textTestId
-                ? `the element with testID "${tapped.textTestId}"`
-                : label
-                  ? `the ${tapped.tag} element showing "${label}"`
-                  : `the ${tapped.tag} element`;
+        : hasColor && !hasBg && tapped.textTestId
+          ? `the element with testID "${tapped.textTestId}"`
+          : hasColor && hasBg && tapped.boxTestId
+            ? `the element with testID "${tapped.boxTestId}"`
+            : hasColor && tapped.boxTestId
+              ? `the element with testID "${tapped.boxTestId}"`
+              : hasBg && tapped.boxTestId
+                ? `the element with testID "${tapped.boxTestId}"`
+                : hasBg && tapped.textTestId
+                  ? `the element with testID "${tapped.textTestId}"`
+                  : hasBg && label
+                    ? `the card container for "${label}"`
+                    : tapped.textTestId
+                      ? `the element with testID "${tapped.textTestId}"`
+                      : label
+                        ? `the ${tapped.tag} element showing "${label}"`
+                        : `the ${tapped.tag} element`;
     const message = `[Tap edit] In the app, find ${target} and ${changes.join("; ")}. Change only what was tapped.`;
-    const displayMessage = friendlyTapEditMessage(changes);
 
-    s.appendLocal("build", displayMessage);
+    s.appendLocal("build", friendlyTapEditMessage(changes));
     s.send({ type: "chat.send", conversation: "build", text: message });
-    closeTapPanel();
+    hideTapPanel();
+    window.setTimeout(() => postToPreview({ type: "appable:clear-outline" }), 50);
   }
 
   function updateDraftText(index: number, value: string) {
     setDraftTexts((prev) => prev.map((t, i) => (i === index ? value : t)));
+    postToPreview({ type: "appable:apply-parts", parts: [{ index, value }] });
+  }
+
+  function hideTapPanel() {
+    setTapped(null);
+    setPartIsIcon([]);
   }
 
   function closeTapPanel() {
-    setTapped(null);
+    hideTapPanel();
     postToPreview({ type: "appable:clear" });
   }
 
@@ -242,7 +268,11 @@ export function Build({
   const status = s.projectStatus ?? project?.status ?? "new";
   const spec = s.spec ?? project?.specs?.[0]?.data ?? null;
   const preview = s.preview?.status === "ready" ? s.preview : null;
-  const webUrl = preview?.webUrl ?? project?.preview?.webUrl ?? null;
+  const baseWebUrl = preview?.webUrl ?? project?.preview?.webUrl ?? null;
+  const webUrl =
+    baseWebUrl && previewNonce > 0
+      ? `${baseWebUrl}${baseWebUrl.includes("?") ? "&" : "?"}_r=${previewNonce}`
+      : baseWebUrl;
   const expUrl = preview?.expUrl ?? project?.preview?.expUrl ?? null;
   const building = status === "building";
   /** Only show the live preview once the initial build finished — not the empty Expo template mid-build. */
@@ -319,11 +349,13 @@ export function Build({
     if (undoBusy || !canUndo || agentBusy || building) return;
     setUndoBusy(true);
     setEditMode(false);
+    postToPreview({ type: "appable:clear" });
     try {
       const res = await api<{ ok: boolean; canUndo: boolean }>(`/projects/${projectId}/undo`, {
         method: "POST",
       });
       setCanUndo(res.canUndo);
+      setPreviewNonce((n) => n + 1);
       setIframeKey((k) => k + 1);
     } catch {
       // Agent status line shows errors from the API when undo fails.
@@ -492,11 +524,13 @@ export function Build({
                 </button>
               </div>
               {draftTexts.map((part, i) => (
-                <label className="edit-field" key={`${part}-${i}`}>
+                <label className="edit-field" key={`edit-part-${i}`}>
                   <span>
-                    {draftTexts.length > 1
-                      ? originalTexts[i]?.slice(0, 28) || `Text ${i + 1}`
-                      : "Text"}
+                    {partIsIcon[i]
+                      ? "Icon"
+                      : draftTexts.length > 1
+                        ? originalTexts[i]?.slice(0, 28) || `Text ${i + 1}`
+                        : "Text"}
                   </span>
                   <input
                     value={part}
@@ -530,7 +564,7 @@ export function Build({
                 Apply change
               </button>
               <p className="muted small edit-panel-foot">
-                Shows instantly, saves in the background.
+                Preview updates instantly. Wait for &quot;Change saved.&quot; before leaving.
               </p>
             </div>
           )}

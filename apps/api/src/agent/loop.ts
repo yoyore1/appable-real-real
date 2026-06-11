@@ -16,12 +16,19 @@ import {
   ensureRunning,
   getHeadRef,
   getProjectLogs,
+  invalidateMetroBundle,
   listProjectFiles,
   resetToGitRef,
   touch,
   verifyApp,
 } from "../orchestrator.js";
-import { buildSystemPrompt, editSystemPrompt, healSystemPrompt } from "./prompts.js";
+import {
+  buildSystemPrompt,
+  editSystemPrompt,
+  healSystemPrompt,
+  tapEditHealSystemPrompt,
+} from "./prompts.js";
+import { auditTapEditReadiness, formatTapEditAuditReport } from "./tapEditAudit.js";
 import { tryTapEditPatch } from "./tapEdit.js";
 import { agentTools, executeTool } from "./tools.js";
 
@@ -177,6 +184,50 @@ export async function runBuild(projectId: string): Promise<void> {
       }
     }
 
+    // Post-build: every label needs testID so tap-to-edit saves to code.
+    let tapEditIssues = await auditTapEditReadiness(projectId);
+    if (tapEditIssues.length > 0) {
+      status(projectId, "fixing", "Making labels editable by tap...");
+      await logBuild(
+        projectId,
+        "info",
+        "system",
+        formatTapEditAuditReport(tapEditIssues),
+      );
+      const tapHealMessages: ChatMessage[] = [
+        { role: "system", content: tapEditHealSystemPrompt(spec) },
+        {
+          role: "user",
+          content: `Fix every item below. Add testID only — no other changes.\n\n${formatTapEditAuditReport(tapEditIssues)}`,
+        },
+      ];
+      const tapHealChoice = pickAgentModel("build", 1);
+      await agentLoop(
+        projectId,
+        tapHealChoice,
+        tapHealMessages,
+        HEAL_ITERATIONS,
+        state,
+        "FIX COMPLETE",
+      );
+      const recheck = await auditTapEditReadiness(projectId);
+      if (recheck.length > 0) {
+        await logBuild(
+          projectId,
+          "warn",
+          "system",
+          `Tap-edit audit: ${recheck.length} item(s) still missing testID after heal pass.`,
+        );
+      } else {
+        await logBuild(projectId, "info", "system", "Tap-edit audit: all labels have testIDs.");
+      }
+      const postTapVerify = await verifyApp(projectId);
+      if (postTapVerify) {
+        await logBuild(projectId, "warn", "system", `Post tap-edit verify: ${postTapVerify}`);
+      }
+      tapEditIssues = recheck;
+    }
+
     status(projectId, "checking", "Saving your progress...");
     await createCheckpoint(projectId, "build").catch((err) =>
       logBuild(projectId, "warn", "system", `Checkpoint failed: ${err.message}`),
@@ -244,6 +295,7 @@ export async function runEdit(projectId: string, request: string): Promise<void>
     if (request.startsWith("[Tap edit]")) {
       const tapPatch = await tryTapEditPatch(projectId, request);
       if (tapPatch.ok) {
+        await invalidateMetroBundle(projectId).catch(() => {});
         status(projectId, "checking", "Making sure your app still loads...");
         const verifyError = await verifyApp(projectId);
         if (verifyError) {
@@ -257,11 +309,40 @@ export async function runEdit(projectId: string, request: string): Promise<void>
           status(projectId, "idle", "Change rolled back - your app is untouched.");
           return;
         }
-        await createCheckpoint(projectId, `edit: ${request.slice(0, 60)}`).catch(() => {});
+        const checkpointId = await createCheckpoint(projectId, `edit: ${request.slice(0, 60)}`).catch(
+          (err) => {
+            void logBuild(
+              projectId,
+              "warn",
+              "system",
+              `Tap edit checkpoint failed: ${err instanceof Error ? err.message : String(err)}`,
+            );
+            return null;
+          },
+        );
+        if (!checkpointId) {
+          await sendEditReply(
+            projectId,
+            conversation.id,
+            "Done — your change is in the code, but I couldn't save an undo point for it.",
+            "tap-edit",
+          );
+          status(projectId, "done", "Change saved (no undo point).");
+          return;
+        }
         await sendEditReply(projectId, conversation.id, tapPatch.summary, "tap-edit");
         status(projectId, "done", "Change saved.");
         return;
       }
+
+      await sendEditReply(
+        projectId,
+        conversation.id,
+        "I updated the preview but couldn't save that to your code. Try Undo, then tap again — or describe the change in the chat below.",
+        "tap-edit",
+      );
+      status(projectId, "idle", "Preview only — change wasn't saved to code.");
+      return;
     }
 
     const files = await listProjectFiles(projectId);
