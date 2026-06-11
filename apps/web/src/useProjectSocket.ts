@@ -159,7 +159,12 @@ export function useProjectSocket(projectId: string | null): ProjectSocketState {
           setSpec(event.spec);
           break;
         case "project.status":
-          setProjectStatus(event.status);
+          setProjectStatus((prev) => {
+            if (prev === "building" && event.status !== "building") {
+              setBuildLog([]);
+            }
+            return event.status;
+          });
           break;
         case "checkpoint.created":
           setCheckpointsVersion((n) => n + 1);

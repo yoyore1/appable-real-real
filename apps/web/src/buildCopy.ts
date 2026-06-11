@@ -47,6 +47,7 @@ export function friendlyBuildLogLine(text: string, source: string): string | nul
   }
   if (text.startsWith("deleted ")) return "Cleaned something up";
   if (source === "agent") {
+    if (/<\/?\w*:?tool_call|<parameter|invokename=/i.test(text)) return null;
     if (/plan:/i.test(text) || /^\*\*plan/i.test(text.trim())) return "Made a game plan";
     if (text.includes("BUILD COMPLETE") || text.includes("EDIT COMPLETE")) return null;
     if (text.length > 100) return null;

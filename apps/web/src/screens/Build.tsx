@@ -302,8 +302,8 @@ export function Build({
           </div>
 
           {tab === "build" ? (
-            building || (s.buildLog.length > 0 && s.build.length === 0) ? (
-              <ActivityFeed log={s.buildLog} friendly={building} />
+            building ? (
+              <ActivityFeed log={s.buildLog} friendly />
             ) : (
               <ChatPane
                 items={s.build}
