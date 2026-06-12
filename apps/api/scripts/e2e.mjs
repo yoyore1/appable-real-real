@@ -159,13 +159,24 @@ async function main() {
   if (!res.ok) throw new Error(`Preview returned ${res.status}`);
   log(`preview responded ${res.status}, ${html.length} bytes`);
 
-  const bundleRes = await fetch(`${webUrl.replace(/\/$/, "")}/index.ts.bundle?platform=web&dev=true`, {
-    signal: AbortSignal.timeout(180_000),
-  });
-  const bundle = await bundleRes.text();
-  if (!bundleRes.ok) throw new Error(`Bundle returned ${bundleRes.status}`);
+  const bundlePaths = [
+    `${webUrl.replace(/\/$/, "")}/node_modules/expo-router/entry.bundle?platform=web&dev=true`,
+    `${webUrl.replace(/\/$/, "")}/index.ts.bundle?platform=web&dev=true`,
+    `${webUrl.replace(/\/$/, "")}/index.bundle?platform=web&dev=true`,
+  ];
+  let bundle = "";
+  let bundleStatus = 0;
+  for (const url of bundlePaths) {
+    const bundleRes = await fetch(url, { signal: AbortSignal.timeout(180_000) });
+    bundleStatus = bundleRes.status;
+    if (bundleRes.ok) {
+      bundle = await bundleRes.text();
+      log(`bundle ok from ${url.split("/").slice(-1)[0]}, ${bundle.length} bytes`);
+      break;
+    }
+  }
+  if (!bundle) throw new Error(`Bundle returned ${bundleStatus}`);
   if (bundle.length < 8000) throw new Error(`Bundle too small (${bundle.length} bytes)`);
-  log(`bundle ok, ${bundle.length} bytes`);
 
   log("E2E PASSED");
   ws.close();

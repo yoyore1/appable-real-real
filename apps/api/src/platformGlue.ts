@@ -1,10 +1,25 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { redirectRogueTabWrite } from "./routerGlue.js";
 
-/** Side-effect import Metro resolves reliably from TypeScript entry. */
+/** Side-effect import for Expo Router apps — lives in app/_layout.tsx. */
 export const BRIDGE_FILENAME = "appable-bridge.js";
 export const BRIDGE_IMPORT = 'import "./appable-bridge.js";';
+export const BRIDGE_IMPORT_APP_LAYOUT = 'import "../appable-bridge.js";';
+export const APP_LAYOUT_PATH = "app/_layout.tsx";
+
+/** Agent must never write these — platform owns them. */
+export const AGENT_WRITE_DENY = new Set([
+  BRIDGE_FILENAME,
+  APP_LAYOUT_PATH,
+  "app/(tabs)/_layout.tsx",
+  "app/(stack)/_layout.tsx",
+  "metro.config.js",
+  "metro.config.ts",
+  "metro.config.mjs",
+  "metro.config.cjs",
+]);
 
 const BRIDGE_PATH = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -22,15 +37,6 @@ export function loadBridgeSource(): string {
   return cachedBridge;
 }
 
-/** Agent must never write these — platform owns them. */
-export const AGENT_WRITE_DENY = new Set([
-  BRIDGE_FILENAME,
-  "metro.config.js",
-  "metro.config.ts",
-  "metro.config.mjs",
-  "metro.config.cjs",
-]);
-
 /** Agent must never delete these (platform may remove bad metro configs). */
 export const AGENT_DELETE_DENY = new Set([BRIDGE_FILENAME]);
 
@@ -45,27 +51,41 @@ export function normalizeIndexTs(content: string): string {
   return `${BRIDGE_IMPORT}\n${body.join("\n")}`.replace(/\n{3,}/g, "\n\n");
 }
 
+const BRIDGE_IMPORT_ANY_RE =
+  /^\s*import\s+["'][^"']*appable-bridge(?:\.js)?["'];?\s*$/;
+
+/** Ensure bridge import at top of Expo Router root layout. */
+export function normalizeAppLayout(content: string): string {
+  const lines = content.replace(/^\uFEFF/, "").split("\n");
+  const body = lines.filter((line) => !BRIDGE_IMPORT_ANY_RE.test(line));
+  while (body.length > 0 && body[0]!.trim() === "") body.shift();
+  return `${BRIDGE_IMPORT_APP_LAYOUT}\n${body.join("\n")}`.replace(/\n{3,}/g, "\n\n");
+}
+
 export function normalizeAgentPath(filePath: string): string {
-  return filePath.replace(/\\/g, "/").replace(/^\/+/, "").replace(/^app\//, "");
+  return filePath.replace(/\\/g, "/").replace(/^\/+/, "");
 }
 
 export function assertAgentWriteAllowed(
   filePath: string,
   content: string,
-): { ok: true; content: string } | { ok: false; message: string } {
-  const path = normalizeAgentPath(filePath);
+): { ok: true; content: string; path: string } | { ok: false; message: string } {
+  let path = redirectRogueTabWrite(normalizeAgentPath(filePath));
   if (AGENT_WRITE_DENY.has(path)) {
     return {
       ok: false,
       message:
-        `write_file blocked: ${path} is platform-owned (tap-to-edit bridge / Metro config). ` +
-        "Fix app code in App.tsx or src/ only. The platform repairs bridge wiring automatically.",
+        `write_file blocked: ${path} is platform-owned (bridge / router layouts / Metro). ` +
+        "Use app/(tabs)/index.tsx or settings.tsx for tab roots; put other screens in app/(stack)/.",
     };
   }
   if (path === "index.ts") {
-    return { ok: true, content: normalizeIndexTs(content) };
+    return { ok: true, content: normalizeIndexTs(content), path };
   }
-  return { ok: true, content };
+  if (path === APP_LAYOUT_PATH) {
+    return { ok: true, content: normalizeAppLayout(content), path };
+  }
+  return { ok: true, content, path };
 }
 
 export function assertAgentDeleteAllowed(filePath: string): { ok: true } | { ok: false; message: string } {
@@ -85,7 +105,7 @@ export function assertAgentCommandAllowed(command: string): { ok: true } | { ok:
     return {
       ok: false,
       message:
-        "run_command blocked: do not modify appable-bridge or metro.config via shell. Fix App.tsx / src/ only.",
+        "run_command blocked: do not modify appable-bridge or metro.config via shell. Fix route/screen files only.",
     };
   }
   return { ok: true };
@@ -98,6 +118,10 @@ export function isBridgeBundleError(message: string): boolean {
 /** Prompt snippet — agents must not touch platform glue. */
 export const PLATFORM_AGENT_RULES = `### PLATFORM FILES (never modify — auto-repaired)
 - appable-bridge.js — tap-to-edit bridge (platform-owned)
-- index.ts — platform keeps \`import "./appable-bridge.js";\` at the top; do not rewrite entry
+- app/_layout.tsx — root Expo Router layout (bridge import at top)
+- app/(tabs)/_layout.tsx — tab shell: Home + Settings only (platform-owned)
+- app/(stack)/_layout.tsx — stack shell for secondary screens (platform-owned)
 - metro.config.js/ts — NEVER create or edit Metro config to "fix" resolution errors
-If read_build_logs mentions appable-bridge, fix App.tsx / src/ only — the platform repairs glue.`;
+Tab bar = Home + Settings ONLY. Put habits, detail, legal, add flows in app/(stack)/.
+Navigate with router.push('/habits') — stack screens must NOT live under app/(tabs)/.
+If read_build_logs mentions appable-bridge, fix app/(tabs)/*.tsx, app/(stack)/*.tsx, or src/ only.`;

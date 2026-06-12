@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { Modal, Platform, Pressable, StyleSheet, View } from "react-native";
-import { colors, layout, radius, spacing } from "../theme/tokens.js";
+import { colors, layout, radius, spacing } from "../theme/tokens";
 
 type Props = {
   testID: string;

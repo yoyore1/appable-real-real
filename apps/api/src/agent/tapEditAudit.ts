@@ -5,7 +5,10 @@ export type TapEditAuditIssueKind =
   | "pressable-missing-testid"
   | "title-split-across-text"
   | "day-display-hack"
-  | "special-case-title-render";
+  | "special-case-title-render"
+  | "prop-text-bad-testid"
+  | "hardcoded-user-text"
+  | "rogue-tab-route";
 
 export interface TapEditAuditIssue {
   file: string;
@@ -15,12 +18,33 @@ export interface TapEditAuditIssue {
 }
 
 const AUDIT_GLOBS = [
+  /^app\/\(tabs\)\/.+\.(tsx|jsx)$/,
+  /^app\/\(stack\)\/.+\.(tsx|jsx)$/,
   /^(src\/screens|src\/components)\/.+\.(tsx|jsx)$/,
   /^src\/lib\/.+\.(tsx|ts)$/,
   /^App\.tsx$/,
 ];
 
-/** Style keys used for long legal/footer copy — tap-to-edit targets labels, not these. */
+const TAB_BAR_ONLY = new Set(["index", "settings"]);
+
+/** Secondary screens under (tabs)/ leak into the tab bar — belong in app/(stack)/. */
+function findRogueTabRouteIssues(file: string): TapEditAuditIssue[] {
+  const norm = file.replace(/\\/g, "/");
+  if (!norm.startsWith("app/(tabs)/")) return [];
+  if (norm === "app/(tabs)/_layout.tsx") return [];
+  const rel = norm.slice("app/(tabs)/".length);
+  if (!/\.(tsx|jsx)$/.test(rel)) return [];
+  const routeName = rel.replace(/\.(tsx|jsx)$/, "");
+  if (TAB_BAR_ONLY.has(routeName)) return [];
+  return [
+    {
+      file: norm,
+      line: 1,
+      kind: "rogue-tab-route",
+      snippet: `Move to app/(stack)/${rel} — only Home + Settings belong in (tabs)/`,
+    },
+  ];
+}
 const SKIP_TEXT_STYLE_KEYS = new Set([
   "legalText",
   "footerText",
@@ -30,6 +54,87 @@ const SKIP_TEXT_STYLE_KEYS = new Set([
 
 const FULL_DAY_NAMES =
   /Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday/;
+
+/** `{item.name}` in Text → testID must end with `-name` (or `-title`, `-label`, `-desc`). */
+const PROP_FIELD_TESTID_SUFFIX: Record<string, string> = {
+  name: "name",
+  title: "title",
+  label: "label",
+  description: "desc",
+};
+
+const HARDCODED_TEXT_ALLOW = new Set([
+  "Loading...",
+  "Loading",
+  "Done",
+  "Tap",
+  "...",
+  "Settings",
+  "Home",
+  "Habits",
+  "Go back",
+  "Something went wrong.",
+  "Habit not found",
+  "Delete Habit",
+  "Delete",
+  "Cancel",
+]);
+
+function testIdHasFieldSuffix(attrs: string, suffix: string): boolean {
+  return (
+    attrs.includes(`-${suffix}\``) ||
+    attrs.includes(`-${suffix}"`) ||
+    attrs.includes(`-${suffix}'`) ||
+    attrs.includes(`-${suffix}}`)
+  );
+}
+
+function findPropTextTestIdIssues(content: string, file: string): TapEditAuditIssue[] {
+  const issues: TapEditAuditIssue[] = [];
+  const re = /<Text\b([^>]*)>([\s\S]*?)<\/Text>/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(content)) !== null) {
+    const attrs = m[1] ?? "";
+    const inner = (m[2] ?? "").trim();
+    const prop = inner.match(/^\{(\w+)\.(\w+)\}$/);
+    if (!prop) continue;
+    const suffix = PROP_FIELD_TESTID_SUFFIX[prop[2]];
+    if (!suffix) continue;
+    if (!/testID\s*=/.test(attrs)) continue;
+    if (testIdHasFieldSuffix(attrs, suffix)) continue;
+    issues.push({
+      file,
+      line: lineNumberAt(content, m.index),
+      kind: "prop-text-bad-testid",
+      snippet: `<Text${attrs}>${inner}</Text>`.replace(/\s+/g, " ").trim().slice(0, 140),
+    });
+  }
+  return issues;
+}
+
+/** User copy as JSX literal — should live in storage.ts and render as {item.field}. */
+function findHardcodedUserTextIssues(content: string, file: string): TapEditAuditIssue[] {
+  const issues: TapEditAuditIssue[] = [];
+  const re = /<Text\b([^>]*)>([\s\S]*?)<\/Text>/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(content)) !== null) {
+    const attrs = m[1] ?? "";
+    if (!/testID\s*=/.test(attrs)) continue;
+    const inner = (m[2] ?? "").trim();
+    if (inner.includes("{")) continue;
+    const text = inner.replace(/^["']|["']$/g, "").trim();
+    if (text.length < 10) continue;
+    if (HARDCODED_TEXT_ALLOW.has(text)) continue;
+    if (/^[\d./%-]+$/.test(text)) continue;
+    issues.push({
+      file,
+      line: lineNumberAt(content, m.index),
+      kind: "hardcoded-user-text",
+      snippet: `<Text${attrs}>${text.slice(0, 40)}</Text>`.replace(/\s+/g, " ").trim().slice(0, 140),
+    });
+  }
+  return issues;
+}
 
 function isAuditableFile(path: string): boolean {
   return AUDIT_GLOBS.some((re) => re.test(path.replace(/\\/g, "/")));
@@ -96,15 +201,30 @@ function findPressableIssues(content: string, file: string): TapEditAuditIssue[]
   while ((m = re.exec(content)) !== null) {
     const parsed = parseOpeningTagAt(content, m.index);
     if (!parsed) continue;
-    if (/testID\s*=/.test(parsed.tag)) continue;
     const before = content.slice(Math.max(0, parsed.start - 800), parsed.start);
     if (!/\.map\s*\(/.test(before)) continue;
-    issues.push({
-      file,
-      line: lineNumberAt(content, parsed.start),
-      kind: "pressable-missing-testid",
-      snippet: parsed.tag.replace(/\s+/g, " ").trim().slice(0, 140),
-    });
+
+    if (!/testID\s*=/.test(parsed.tag)) {
+      issues.push({
+        file,
+        line: lineNumberAt(content, parsed.start),
+        kind: "pressable-missing-testid",
+        snippet: parsed.tag.replace(/\s+/g, " ").trim().slice(0, 140),
+      });
+      continue;
+    }
+
+    const hasRowSuffix =
+      /-(row|card|item|pressable)\`/.test(parsed.tag) ||
+      /-(row|card|item|pressable)"/.test(parsed.tag);
+    if (!hasRowSuffix) {
+      issues.push({
+        file,
+        line: lineNumberAt(content, parsed.start),
+        kind: "pressable-missing-testid",
+        snippet: `Mapped row needs -row/-card testID suffix: ${parsed.tag.replace(/\s+/g, " ").trim().slice(0, 100)}`,
+      });
+    }
   }
   return issues;
 }
@@ -191,6 +311,8 @@ export function auditFileContent(content: string, file: string): TapEditAuditIss
   return [
     ...findTextIssues(content, file),
     ...findPressableIssues(content, file),
+    ...findPropTextTestIdIssues(content, file),
+    ...findHardcodedUserTextIssues(content, file),
     ...findSplitTitleIssues(content, file),
     ...findDayDisplayHackIssues(content, file),
     ...findSpecialCaseTitleRender(content, file),
@@ -202,6 +324,7 @@ export async function auditTapEditReadiness(projectId: string): Promise<TapEditA
   const issues: TapEditAuditIssue[] = [];
 
   for (const file of files) {
+    issues.push(...findRogueTabRouteIssues(file));
     if (!isAuditableFile(file)) continue;
     const content = await readProjectFile(projectId, file);
     issues.push(...auditFileContent(content, file));
@@ -213,9 +336,12 @@ export async function auditTapEditReadiness(projectId: string): Promise<TapEditA
 const KIND_LABELS: Record<TapEditAuditIssueKind, string> = {
   "text-missing-testid": "Text without testID",
   "pressable-missing-testid": "list row without testID",
+  "prop-text-bad-testid": "data field Text missing -name/-title suffix on testID",
+  "hardcoded-user-text": "user copy hardcoded in JSX (use storage.ts)",
   "title-split-across-text": "split title across Text nodes",
   "day-display-hack": "day display override ternary",
   "special-case-title-render": "special-case renderTitle()",
+  "rogue-tab-route": "screen in app/(tabs)/ but not Home/Settings — use app/(stack)/",
 };
 
 /** Human + agent readable report (capped). */
@@ -240,6 +366,8 @@ export function formatTapEditAuditReport(
     "Fix so every tap-to-edit change saves to code (rule 7b).",
     "- One label = one Text; editable strings in data (storage.ts, tabs arrays).",
     "- testID on every label and mapped row; icon beside label in a row.",
+    "- Data-driven labels: {item.name} → testID ends with -name (e.g. `home-habit-${id}-name`).",
+    "- User-visible strings in storage.ts / data arrays — not JSX literals.",
     "- No day === 'Mon' ? \"Monday\" : day hacks; no title.split() fragments.",
     "",
   ];

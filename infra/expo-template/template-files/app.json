@@ -1,0 +1,15 @@
+{
+  "expo": {
+    "name": "Appable App",
+    "slug": "appable-app",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "appable",
+    "userInterfaceStyle": "automatic",
+    "web": {
+      "bundler": "metro",
+      "output": "single"
+    },
+    "plugins": ["expo-router"]
+  }
+}

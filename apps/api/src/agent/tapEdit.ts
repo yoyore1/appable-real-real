@@ -1,5 +1,15 @@
 import { emit } from "../events.js";
 import { listProjectFiles, readProjectFile, writeProjectFile } from "../orchestrator.js";
+import {
+  LIST_ITEM_FIELD_SUFFIX,
+  deriveRowTestIdFromLabel,
+  isListItemFieldTestId,
+  isSharedMapTemplateElement,
+  listItemStyleTestIdCandidates,
+  parseListItemId,
+  parseListItemTestContext,
+  resolveListItemTestIdFromAnchor,
+} from "./tapEditDiscovery.js";
 
 type StyleProp = "color" | "backgroundColor" | "fontWeight" | "fontFamily";
 
@@ -144,13 +154,48 @@ export function parseTapEditRequest(request: string): TapEditRequest | null {
  * Apply tap-to-edit color/background changes directly in source files.
  * Preview-only DOM tweaks from the bridge are not persisted — this is.
  */
-export async function tryTapEditPatch(
-  projectId: string,
-  request: string,
-): Promise<{ ok: true; summary: string; file: string } | { ok: false }> {
-  const parsed = parseTapEditRequest(request);
-  if (!parsed) return { ok: false };
+/** Build UI tap-to-edit message for a text replace probe or save. */
+export function buildTapEditReplaceMessage(
+  testId: string,
+  oldText: string,
+  newText: string,
+): string {
+  const escapedOld = oldText.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  const escapedNew = newText.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  return `[Tap edit] In the app, find the element with testID "${testId}" and replace the text "${escapedOld}" with "${escapedNew}". Change only what was tapped.`;
+}
 
+export function buildTapEditColorMessage(testId: string, color: string): string {
+  return `[Tap edit] In the app, find the element with testID "${testId}" and set the text color to ${color}. Change only what was tapped.`;
+}
+
+export function buildTapEditBackgroundMessage(testId: string, color: string): string {
+  return `[Tap edit] In the app, find the element with testID "${testId}" and set the background color to ${color}. Change only what was tapped.`;
+}
+
+function resolveEffectiveTestId(
+  parsed: TapEditRequest,
+  sources: Map<string, string>,
+): string {
+  let testId =
+    parsed.testId && !isBroadContainerTestId(parsed.testId) ? parsed.testId : "";
+
+  const anchor = parsed.changes.find((c) => c.anchorText)?.anchorText;
+  if (!testId && anchor) {
+    testId = resolveListItemTestIdFromAnchor(sources, anchor) ?? "";
+  }
+
+  return testId;
+}
+
+type TapEditPatchAttempt =
+  | { ok: true; summary: string; file: string; updated: string }
+  | { ok: false };
+
+export function attemptTapEditPatch(
+  parsed: TapEditRequest,
+  sources: Map<string, string>,
+): TapEditPatchAttempt {
   const hasWork = parsed.changes.some(
     (c) =>
       c.type === "color" ||
@@ -166,12 +211,314 @@ export async function tryTapEditPatch(
   const hasAnchor = parsed.changes.some((c) => c.anchorText);
   const hasTextReplace = parsed.changes.some((c) => c.type === "text" && c.oldValue);
   const hasIconRemoval = parsed.changes.some((c) => c.type === "removeIcon");
-  const effectiveTestId =
-    parsed.testId && !isBroadContainerTestId(parsed.testId) ? parsed.testId : "";
+  const effectiveTestId = resolveEffectiveTestId(parsed, sources);
   if (!effectiveTestId && !hasAnchor && !hasTextReplace && !hasIconRemoval && !onlyBackground) {
     return { ok: false };
   }
 
+  const screenBgChange = parsed.changes.find((c) => c.type === "background" && c.screen);
+  if (screenBgChange) {
+    return attemptPatchScreenBackgroundInSources(sources, screenBgChange.value, parsed.changes);
+  }
+
+  let candidates = findCandidateFilesInSources(
+    sources,
+    effectiveTestId || parsed.testId,
+    parsed.changes,
+  );
+  if (candidates.length === 0 && (hasTextReplace || onlyBackground)) {
+    candidates = [...sources.keys()].filter(isEditableSourceFile);
+  }
+
+  const tried = new Set<string>();
+  for (const file of candidates) {
+    tried.add(file);
+    const content = sources.get(file);
+    if (content === undefined) continue;
+    const updated = patchTapEditInFile(content, effectiveTestId, parsed.changes);
+    if (updated && updated !== content && looksLikeValidSource(updated)) {
+      return { ok: true, summary: tapEditSummary(parsed.changes), file, updated };
+    }
+  }
+
+  if (hasTextReplace && !effectiveTestId) {
+    for (const file of sources.keys()) {
+      if (!isEditableSourceFile(file) || tried.has(file)) continue;
+      const content = sources.get(file);
+      if (content === undefined) continue;
+      const updated = patchTapEditInFile(content, "", parsed.changes);
+      if (updated && updated !== content && looksLikeValidSource(updated)) {
+        return { ok: true, summary: tapEditSummary(parsed.changes), file, updated };
+      }
+    }
+  }
+
+  // Shared components (AppButton, SettingsRow…) render the tapped element via
+  // testID passthrough — the runtime id never appears in the component file.
+  const passthroughId = effectiveTestId || parsed.testId;
+  if (passthroughId) {
+    const pt = patchComponentPassthroughInSources(sources, passthroughId, parsed.changes);
+    if (pt && looksLikeValidSource(pt.updated)) {
+      return { ok: true, summary: tapEditSummary(parsed.changes), file: pt.file, updated: pt.updated };
+    }
+  }
+
+  return { ok: false };
+}
+
+/**
+ * Patch tapped elements rendered by shared components via testID passthrough.
+ *
+ * Runtime id "home-add-habit" → `<Pressable testID={testID}>` in AppButton.tsx,
+ * runtime id "home-add-habit-label" → `<Text testID={`${testID}-label`}>` there.
+ * The component file is located by finding the literal instantiation
+ * (`<AppButton testID="home-add-habit"`) and matching its exported tag name.
+ */
+function patchComponentPassthroughInSources(
+  sources: Map<string, string>,
+  testId: string,
+  changes: TapEditChange[],
+): { file: string; updated: string } | null {
+  const instance = findComponentInstantiation(sources, testId);
+  if (!instance) return null;
+
+  for (const [file, content] of sources) {
+    if (!isEditableSourceFile(file)) continue;
+    if (!componentFileExports(content, instance.componentName)) continue;
+
+    // Restrict passthrough scanning to the branch of the component that
+    // matches the instantiation. Without this, tapping `<AppButton testID="…"
+    // variant="primary" />` would paint all three branches in AppButton.tsx
+    // (primary, secondary, danger) because they all share `testID={testID}`.
+    const branchSelection = instance.variant
+      ? selectComponentBranch(content, instance.variant)
+      : selectComponentBranch(content, null);
+    const branch = branchSelection ?? content;
+    const branchStart = branchSelection ? content.indexOf(branch) : -1;
+
+    let updated = content;
+    let touched = false;
+
+    for (const change of changes) {
+      if (change.type === "background") {
+        const next = patchPassthroughElements(branch, /testID=\{testID\}/g, (tag) =>
+          isContainerTag(tag) ? patchStyleOnTag(tag, "backgroundColor", change.value) : null,
+        );
+        if (next && branchStart !== -1) {
+          // Splice the patched branch back into the full file.
+          updated =
+            content.slice(0, branchStart) + next + content.slice(branchStart + branch.length);
+          touched = true;
+        }
+        continue;
+      }
+
+      if (
+        (change.type === "color" || change.type === "fontWeight" || change.type === "fontFamily") &&
+        instance.suffix
+      ) {
+        const suffixRe = new RegExp(
+          `testID=\\{\\\`\\$\\{testID\\}-${instance.suffix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\\`\\}`,
+          "g",
+        );
+        const next = patchPassthroughElements(branch, suffixRe, (tag) =>
+          /<Text\b/.test(tag) ? patchStyleOnTag(tag, change.type as StyleProp, change.value) : null,
+        );
+        if (next && branchStart !== -1) {
+          updated =
+            content.slice(0, branchStart) + next + content.slice(branchStart + branch.length);
+          touched = true;
+        }
+        continue;
+      }
+    }
+
+    if (touched && updated !== content) return { file, updated };
+  }
+  return null;
+}
+
+/**
+ * Locate the literal `<SomeComponent testID="…">` instantiation that produces
+ * this runtime testID, trying the full id first, then progressively shorter
+ * bases with the remainder as a passthrough suffix ("home-add-habit-label" →
+ * base "home-add-habit" + suffix "label").
+ */
+export function findComponentInstantiation(
+  sources: Map<string, string>,
+  testId: string,
+): { componentName: string; base: string; suffix: string | null; variant?: string } | null {
+  const candidates: { base: string; suffix: string | null }[] = [{ base: testId, suffix: null }];
+  const parts = testId.split("-");
+  for (let i = parts.length - 1; i >= 1; i--) {
+    const base = parts.slice(0, i).join("-");
+    const suffix = parts.slice(i).join("-");
+    if (base && suffix) candidates.push({ base, suffix });
+  }
+
+  for (const { base, suffix } of candidates) {
+    for (const content of sources.values()) {
+      // Read the full instantiation so we can capture `variant="primary"` etc.
+      const escaped = base.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const re = new RegExp(
+        `<([A-Z]\\w*)\\b[^<]*?testID="${escaped}"[^<]*?(?:\\/>|>)`,
+        "s",
+      );
+      const m = content.match(re);
+      const name = m?.[1];
+      if (!name || NATIVE_TAGS.has(name)) continue;
+      const variantMatch = m[0]?.match(/\bvariant="([^"]+)"/);
+      return {
+        componentName: name,
+        base,
+        suffix,
+        variant: variantMatch?.[1],
+      };
+    }
+  }
+  return null;
+}
+
+function componentFileExports(content: string, componentName: string): boolean {
+  return new RegExp(`export (?:function|const) ${componentName}\\b`).test(content);
+}
+
+/**
+ * Pick the JSX branch of a variant-aware component that the instantiation
+ * actually used. For `variant="primary"` (the default) it returns the trailing
+ * return-statement block; for `"secondary"` or `"danger"` it returns the
+ * matching `if (variant === "X") { … }` block. Brace-matched, so nested
+ * components and ternaries don't trip it up.
+ */
+export function selectComponentBranch(content: string, variant: string | null): string | null {
+  if (!variant || variant === "primary") {
+    // Default branch: the LAST `return (` of the component body. The opener
+    // `(` is part of the regex match, so balance from the position right
+    // after `return`, and require the close to be followed by `;` (otherwise
+    // we hit an inner paren like `({pressed})` in a JSX expression).
+    const re = /return\s*\(/g;
+    let m: RegExpExecArray | null;
+    let best: { start: number; end: number } | null = null;
+    while ((m = re.exec(content)) !== null) {
+      const parenOpen = m.index + m[0].length - 1; // the `(` itself
+      const end = matchParenBlock(content, parenOpen);
+      if (end !== -1 && (best === null || m.index > best.start)) {
+        best = { start: m.index, end };
+      }
+    }
+    return best ? content.slice(best.start, best.end) : content;
+  }
+  const re = new RegExp(`if\\s*\\(\\s*variant\\s*===\\s*["']${variant}["']\\s*\\)\\s*\\{`, "g");
+  const m = re.exec(content);
+  if (!m) return null;
+  const blockStart = m.index + m[0].length;
+  const blockEnd = matchBracedBlock(content, blockStart);
+  if (blockEnd === -1) return null;
+  return content.slice(m.index, blockEnd);
+}
+
+function matchBracedBlock(content: string, start: number): number {
+  let depth = 0;
+  let i = start;
+  while (i < content.length) {
+    const c = content[i];
+    if (c === "{") depth++;
+    else if (c === "}") {
+      depth--;
+      if (depth === 0) return i + 1;
+    }
+    i++;
+  }
+  return -1;
+}
+
+/**
+ * Match a `return (…)` block. `start` must point AT the opening `(` so the
+ * first depth=0 close is the matching one. JSX-expression parens (like
+ * `({pressed})` in `style={({pressed}) => […]}`) are skipped because their
+ * closing `)` is followed by `=>` (not `;`).
+ */
+function matchParenBlock(content: string, start: number): number {
+  if (content[start] !== "(") return -1;
+  let depth = 0;
+  let quote: string | null = null;
+  for (let i = start; i < content.length; i++) {
+    const c = content[i];
+    if (quote) {
+      if (c === quote && content[i - 1] !== "\\") quote = null;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === "`") {
+      quote = c;
+      continue;
+    }
+    if (c === "(") depth++;
+    else if (c === ")") {
+      depth--;
+      if (depth === 0) {
+        let j = i + 1;
+        while (j < content.length && /\s/.test(content[j])) j++;
+        if (content[j] === ";") return i + 1;
+      }
+    }
+  }
+  return -1;
+}
+
+/** Apply a tag patcher to every element whose opening tag matches the testID pattern. */
+function patchPassthroughElements(
+  content: string,
+  testIdPattern: RegExp,
+  patchTag: (tag: string) => string | null,
+): string | null {
+  const matches: { start: number; end: number; tag: string }[] = [];
+  let m: RegExpExecArray | null;
+  testIdPattern.lastIndex = 0;
+  while ((m = testIdPattern.exec(content)) !== null) {
+    const el = walkBackToOpeningTag(content, m.index);
+    if (el) matches.push(el);
+  }
+  if (matches.length === 0) return null;
+
+  let updated = content;
+  let touched = false;
+  // Back to front so earlier offsets stay valid.
+  for (const el of matches.reverse()) {
+    const patched = patchTag(el.tag);
+    if (!patched) continue;
+    updated = updated.slice(0, el.start) + patched + updated.slice(el.end);
+    touched = true;
+  }
+  return touched ? updated : null;
+}
+
+/** Dry-run: would this tap-to-edit message patch source? Uses an in-memory file map. */
+export function probeTapEditRequest(
+  request: string,
+  sources: Map<string, string>,
+): { ok: true; file: string } | { ok: false } {
+  const parsed = parseTapEditRequest(request);
+  if (!parsed) return { ok: false };
+  const result = attemptTapEditPatch(parsed, sources);
+  return result.ok ? { ok: true, file: result.file } : { ok: false };
+}
+
+export async function loadTapEditSourceCache(projectId: string): Promise<Map<string, string>> {
+  const cache = new Map<string, string>();
+  for (const file of await allEditableSourceFiles(projectId)) {
+    cache.set(file, await readProjectFile(projectId, file));
+  }
+  return cache;
+}
+
+export async function tryTapEditPatch(
+  projectId: string,
+  request: string,
+): Promise<{ ok: true; summary: string; file: string } | { ok: false }> {
+  const parsed = parseTapEditRequest(request);
+  if (!parsed) return { ok: false };
+
+  const sources = await loadTapEditSourceCache(projectId);
   const screenBgChange = parsed.changes.find((c) => c.type === "background" && c.screen);
   if (screenBgChange) {
     const screenResult = await tryPatchScreenBackground(
@@ -190,35 +537,11 @@ export async function tryTapEditPatch(
     return { ok: false };
   }
 
-  let candidates = await findCandidateFiles(projectId, parsed.testId, parsed.changes);
-  if (candidates.length === 0 && (hasTextReplace || onlyBackground)) {
-    candidates = await allEditableSourceFiles(projectId);
-  }
-
-  const tried = new Set<string>();
-  for (const file of candidates) {
-    tried.add(file);
-    const content = await readProjectFile(projectId, file);
-    const updated = patchTapEditInFile(content, effectiveTestId, parsed.changes);
-    if (updated && updated !== content && looksLikeValidSource(updated)) {
-      await writeProjectFile(projectId, file, updated);
-      emit(projectId, { type: "file.op", op: "write", path: file });
-      return { ok: true, summary: tapEditSummary(parsed.changes), file };
-    }
-  }
-
-  // Last resort: only when we have no testID — never global-replace with a scoped tap.
-  if (hasTextReplace && !effectiveTestId) {
-    for (const file of await allEditableSourceFiles(projectId)) {
-      if (tried.has(file)) continue;
-      const content = await readProjectFile(projectId, file);
-      const updated = patchTapEditInFile(content, "", parsed.changes);
-      if (updated && updated !== content && looksLikeValidSource(updated)) {
-        await writeProjectFile(projectId, file, updated);
-        emit(projectId, { type: "file.op", op: "write", path: file });
-        return { ok: true, summary: tapEditSummary(parsed.changes), file };
-      }
-    }
+  const result = attemptTapEditPatch(parsed, sources);
+  if (result.ok) {
+    await writeProjectFile(projectId, result.file, result.updated);
+    emit(projectId, { type: "file.op", op: "write", path: result.file });
+    return { ok: true, summary: result.summary, file: result.file };
   }
 
   emit(projectId, {
@@ -231,7 +554,132 @@ export async function tryTapEditPatch(
   return { ok: false };
 }
 
-/** Page background lives in theme tokens + App shell — not random screen ScrollViews. */
+function attemptPatchScreenBackgroundInSources(
+  sources: Map<string, string>,
+  color: string,
+  changes: TapEditChange[],
+): TapEditPatchAttempt {
+  const priority = ["src/theme/tokens.ts", "App.tsx"];
+  for (const file of priority) {
+    const content = sources.get(file);
+    if (content === undefined) continue;
+    const updated = file.endsWith("tokens.ts")
+      ? patchThemeBackgroundToken(content, color)
+      : patchAppShellBackground(content, color);
+    if (updated && updated !== content && looksLikeValidSource(updated)) {
+      return { ok: true, summary: tapEditSummary(changes), file, updated };
+    }
+  }
+
+  for (const file of sources.keys()) {
+    if (!isEditableSourceFile(file)) continue;
+    const content = sources.get(file);
+    if (content === undefined) continue;
+    const updated = patchMainScrollBackground(content, color);
+    if (updated && updated !== content && looksLikeValidSource(updated)) {
+      return { ok: true, summary: tapEditSummary(changes), file, updated };
+    }
+  }
+  return { ok: false };
+}
+
+function findCandidateFilesInSources(
+  sources: Map<string, string>,
+  testId: string | null,
+  changes: TapEditChange[],
+): string[] {
+  const hits = new Set<string>();
+
+  const specificTestId =
+    testId && !isBroadContainerTestId(testId) ? testId : null;
+  if (specificTestId) {
+    for (const f of findFilesWithTestIdInSources(sources, specificTestId)) hits.add(f);
+    const listCtx = parseListItemTestContext(specificTestId);
+    if (listCtx) {
+      for (const f of findFilesWithTestIdTemplatePrefixInSources(sources, listCtx.templatePrefix)) {
+        hits.add(f);
+      }
+    }
+    const dynamic = splitDynamicTestId(specificTestId);
+    if (dynamic) {
+      for (const f of findFilesWithTestIdTemplatePrefixInSources(sources, dynamic.prefix)) {
+        hits.add(f);
+      }
+    }
+  }
+
+  const anchor = changes.find((c) => c.anchorText)?.anchorText;
+  if (anchor) {
+    for (const f of findFilesContainingTextInSources(sources, anchor)) hits.add(f);
+  }
+
+  for (const change of changes) {
+    if (change.type === "text" && change.oldValue) {
+      for (const f of findFilesContainingTextInSources(sources, change.oldValue)) {
+        hits.add(f);
+      }
+    }
+  }
+
+  if (testId && isBroadContainerTestId(testId)) {
+    for (const f of findFilesWithTestIdInSources(sources, testId)) hits.add(f);
+  }
+
+  return [...hits];
+}
+
+function findFilesWithTestIdInSources(
+  sources: Map<string, string>,
+  testId: string,
+): string[] {
+  const hits: string[] = [];
+  const escaped = testId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const dynamicRe = new RegExp(`testID=\\{[^}]*${escaped}`);
+  const needles = [
+    `testID="${testId}"`,
+    `testID='${testId}'`,
+    `testID={\`${testId}\`}`,
+    `testID={"${testId}"}`,
+    `testID={'${testId}'}`,
+  ];
+  for (const [file, content] of sources) {
+    if (!/\.(tsx|jsx)$/.test(file)) continue;
+    if (needles.some((n) => content.includes(n)) || dynamicRe.test(content)) {
+      hits.push(file);
+    }
+  }
+  return hits;
+}
+
+function findFilesWithTestIdTemplatePrefixInSources(
+  sources: Map<string, string>,
+  prefix: string,
+): string[] {
+  const marker = `testID={\`${prefix}-\${`;
+  const hits: string[] = [];
+  for (const [file, content] of sources) {
+    if (!isEditableSourceFile(file)) continue;
+    if (content.includes(marker)) hits.push(file);
+  }
+  return hits;
+}
+
+function findFilesContainingTextInSources(
+  sources: Map<string, string>,
+  text: string,
+): string[] {
+  const needles = [text, stripEmoji(text)].filter(
+    (v, i, arr) => Boolean(v) && arr.indexOf(v) === i,
+  );
+  const hits: string[] = [];
+  for (const [file, content] of sources) {
+    if (!isEditableSourceFile(file)) continue;
+    if (needles.some((n) => content.includes(n))) hits.push(file);
+  }
+  return hits;
+}
+
+/** Page background lives in theme tokens — not tab bar or random ScrollViews. */
 async function tryPatchScreenBackground(
   projectId: string,
   color: string,
@@ -265,13 +713,34 @@ async function tryPatchScreenBackground(
 
 /** Reject patches that would obviously break TSX before we write them. */
 function looksLikeValidSource(src: string): boolean {
-  const singles = (src.match(/'/g) ?? []).length;
-  if (singles % 2 !== 0) return false;
-  const doubles = (src.match(/"/g) ?? []).length;
-  if (doubles % 2 !== 0) return false;
-  // Broken ternary string: ? "foo : day}  (missing closing quote)
-  if (/\?\s*"[^"\n]*:\s*\w+\}/.test(src)) return false;
-  return true;
+  // The legacy quote-count heuristic false-positives on apostrophes inside
+  // string literals ("don't"), escaped quotes, and template strings. The
+  // real test is whether the TypeScript parser accepts the file.
+  return sourceHasNoSyntaxErrors(src);
+}
+
+let _ts: typeof import("typescript") | null = null;
+function sourceHasNoSyntaxErrors(src: string): boolean {
+  try {
+    if (!_ts) {
+      // Lazy ESM-aware load: prefer the modern namespace import, fall back to
+      // CJS require, both so the API works under tsx and compiled builds.
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const req = eval("require") as NodeRequire;
+      _ts = req("typescript") as typeof import("typescript");
+    }
+    const sf = _ts.createSourceFile(
+      "x.tsx",
+      src,
+      _ts.ScriptTarget.Latest,
+      true,
+      _ts.ScriptKind.TSX,
+    );
+    const diagnostics = (sf as unknown as { parseDiagnostics?: unknown[] }).parseDiagnostics;
+    return !Array.isArray(diagnostics) || diagnostics.length === 0;
+  } catch {
+    return true; // never block on a TS loader failure
+  }
 }
 
 /** Apply a tap-edit message to source text (for tests and debugging). */
@@ -284,7 +753,13 @@ export function applyTapEditToSource(content: string, request: string): string |
 }
 
 function isEditableSourceFile(file: string): boolean {
-  return /^src\/.*\.(tsx|jsx|ts)$/.test(file.replace(/\\/g, "/")) && !file.endsWith(".d.ts");
+  const norm = file.replace(/\\/g, "/");
+  if (norm === "app/_layout.tsx" || norm === "app/(tabs)/_layout.tsx") return false;
+  if (norm === "app/(stack)/_layout.tsx") return false;
+  if (/^app\/\(tabs\)\/.+\.(tsx|jsx)$/.test(norm)) return true;
+  if (/^app\/\(stack\)\/.+\.(tsx|jsx)$/.test(norm)) return true;
+  if (norm === "App.tsx") return true;
+  return /^src\/.*\.(tsx|jsx|ts)$/.test(norm) && !norm.endsWith(".d.ts");
 }
 
 async function allEditableSourceFiles(projectId: string): Promise<string[]> {
@@ -303,6 +778,12 @@ async function findCandidateFiles(
     testId && !isBroadContainerTestId(testId) ? testId : null;
   if (specificTestId) {
     for (const f of await findFilesWithTestId(projectId, specificTestId)) hits.add(f);
+    const listCtx = parseListItemTestContext(specificTestId);
+    if (listCtx) {
+      for (const f of await findFilesWithTestIdTemplatePrefix(projectId, listCtx.templatePrefix)) {
+        hits.add(f);
+      }
+    }
     const dynamic = splitDynamicTestId(specificTestId);
     if (dynamic) {
       for (const f of await findFilesWithTestIdTemplatePrefix(projectId, dynamic.prefix)) {
@@ -433,6 +914,152 @@ const DATA_FIELD_BY_TEST_ID_PREFIX: Record<string, string> = {
   tab: "label",
 };
 
+/** `{prefix}-{id}-{field}` rows in data files — discovered dynamically via tapEditDiscovery. */
+
+/** Find JSX tagged with `{prefix}-${item.id}-name` for runtime `{prefix}-h1-name`. */
+function findListItemTemplateElement(
+  content: string,
+  testId: string,
+): { start: number; end: number; tag: string } | null {
+  const ctx = parseListItemTestContext(testId);
+  if (!ctx) return null;
+
+  const marker = `\`${ctx.templatePrefix}-\${`;
+  let from = 0;
+  while (from < content.length) {
+    const idx = content.indexOf(marker, from);
+    if (idx === -1) break;
+    from = idx + marker.length;
+    const snippet = content.slice(idx, idx + 160);
+    if (!snippet.includes(`-${ctx.fieldSuffix}`)) continue;
+    const tag = walkBackToOpeningTag(content, idx);
+    if (tag?.tag.includes("testID")) return tag;
+  }
+  return null;
+}
+
+function detectIdPropertyFromTemplate(tag: string): string {
+  const m = tag.match(/\$\{(\w+)\.(\w+)\}/);
+  return m?.[2] ?? "id";
+}
+
+function stripListItemConditionalStyle(
+  styleExpr: string,
+  prop: StyleProp,
+  mapParam: string,
+  itemId: string,
+  idProp: string,
+): string {
+  const escId = itemId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  // Outer braces optional: handles both the old (broken) braced form and the new bare form.
+  const re = new RegExp(
+    `,\\s*\\{?\\s*${mapParam}\\.${idProp}\\s*===\\s*['"]${escId}['"]\\s*&&\\s*\\{\\s*${prop}\\s*:[^}]+\\}\\s*\\}?`,
+    "g",
+  );
+  return styleExpr.replace(re, "");
+}
+
+function appendListItemConditionalStyle(
+  tag: string,
+  conditional: string,
+  prop: StyleProp,
+  mapParam: string,
+  itemId: string,
+  idProp: string,
+): string | null {
+  const styleRange = findStyleAttribute(tag);
+  if (!styleRange) {
+    const insertAt = tag.lastIndexOf(tag.trimEnd().endsWith("/>") ? "/>" : ">");
+    if (insertAt === -1) return null;
+    return `${tag.slice(0, insertAt)} style={[${conditional}]}${tag.slice(insertAt)}`;
+  }
+
+  const inner = tag.slice(styleRange.innerStart, styleRange.innerEnd).trim();
+  const cleaned = stripListItemConditionalStyle(inner, prop, mapParam, itemId, idProp);
+  let replacement: string;
+  if (cleaned.startsWith("[")) {
+    const body = cleaned.replace(/^\[|\]$/g, "").trim();
+    replacement = body ? `[${body}, ${conditional}]` : `[${conditional}]`;
+  } else if (cleaned.startsWith("{")) {
+    replacement = `[${cleaned}, ${conditional}]`;
+  } else {
+    const arrowPatched = appendToArrowStyle(cleaned, conditional);
+    if (!arrowPatched && /=>/.test(cleaned)) return null;
+    replacement = arrowPatched ?? `[${cleaned}, ${conditional}]`;
+  }
+
+  return (
+    tag.slice(0, styleRange.innerStart) +
+    replacement +
+    tag.slice(styleRange.innerEnd)
+  );
+}
+
+/**
+ * Items rendered via `.map()` with `${item.id}` testIDs — patch a per-item conditional
+ * style (e.g. only h1's name turns red).
+ */
+function patchListItemMapStyle(
+  content: string,
+  testId: string,
+  prop: StyleProp,
+  value: string,
+): string | null {
+  const ctx = parseListItemTestContext(testId);
+  if (!ctx) return null;
+
+  let templateEl = findListItemTemplateElement(content, testId);
+  if (!templateEl && prop === "backgroundColor" && isListItemFieldTestId(testId)) {
+    const rowId = deriveRowTestIdFromLabel(testId);
+    if (rowId) templateEl = findListItemTemplateElement(content, rowId);
+  }
+  if (!templateEl) return null;
+
+  const mapParam = findMapIteratorParamBefore(content, templateEl.start);
+  if (!mapParam) return null;
+
+  const idProp = detectIdPropertyFromTemplate(templateEl.tag);
+  const textProp = prop === "color" || prop === "fontWeight" || prop === "fontFamily";
+  const target =
+    textProp && /<Text\b/.test(templateEl.tag)
+      ? templateEl
+      : isContainerTag(templateEl.tag)
+        ? templateEl
+        : findSmallestContainerBefore(content, templateEl.end);
+  if (!target) return null;
+
+  // No outer braces: inside a style array `{ cond && {...} }` is a syntax error.
+  const conditional = `${mapParam}.${idProp} === '${ctx.itemId}' && { ${prop}: '${value}' }`;
+  const patched = appendListItemConditionalStyle(
+    target.tag,
+    conditional,
+    prop,
+    mapParam,
+    ctx.itemId,
+    idProp,
+  );
+  if (!patched) return null;
+  return replaceTagAt(content, target, patched);
+}
+
+function patchListItemDataField(
+  content: string,
+  testId: string,
+  oldText: string,
+  newText: string,
+): string | null {
+  for (const [fieldSuffix, fieldName] of Object.entries(LIST_ITEM_FIELD_SUFFIX)) {
+    const id = parseListItemId(testId, fieldSuffix);
+    if (!id) continue;
+    const patched = patchObjectFieldById(content, id, fieldName, oldText, newText);
+    if (patched) return patched;
+    // Preview text often differs from seed (trim, partial edit, AsyncStorage vs SEED_HABITS).
+    const byId = patchObjectFieldById(content, id, fieldName, oldText, newText, true);
+    if (byId) return byId;
+  }
+  return null;
+}
+
 function patchConstStringValue(
   content: string,
   ident: string,
@@ -455,7 +1082,45 @@ function patchConstStringValue(
   return null;
 }
 
-/** <Text testID="...">{APP_NAME}</Text> — patch the const/let string, not the JSX child. */
+/** Patch `key: "old"` inside `const OBJ = { ... }` (e.g. HOME_STRINGS.sectionTitle). */
+function patchObjectMemberString(
+  content: string,
+  objName: string,
+  key: string,
+  oldText: string,
+  newText: string,
+): string | null {
+  const objEsc = objName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const keyEsc = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const declRe = new RegExp(
+    `((?:export\\s+)?(?:const|let)\\s+${objEsc}\\s*(?::[^=]+)?=\\s*\\{)([\\s\\S]*?)(\\}\\s*(?:as\\s+const)?\\s*;)`,
+  );
+  const decl = content.match(declRe);
+  if (!decl) return null;
+
+  const body = decl[2];
+  const needles = [oldText, stripEmoji(oldText), oldText.trim()].filter(
+    (v, i, arr) => Boolean(v) && arr.indexOf(v) === i,
+  );
+  for (const old of needles) {
+    const oldEsc = old.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const fieldRe = new RegExp(`(${keyEsc}\\s*:\\s*)(['"])${oldEsc}\\2`);
+    if (fieldRe.test(body)) {
+      const newBody = body.replace(fieldRe, `$1$2${newText}$2`);
+      return content.replace(declRe, `$1${newBody.replace(/\$/g, "$$$$")}$3`);
+    }
+  }
+  // Trim-tolerant: preview text may differ slightly from source.
+  const anyRe = new RegExp(`(${keyEsc}\\s*:\\s*)(['"])([^'"]*)\\2`);
+  const anyMatch = body.match(anyRe);
+  if (anyMatch && anyMatch[3].trim() === oldText.trim()) {
+    const newBody = body.replace(anyRe, `$1$2${newText}$2`);
+    return content.replace(declRe, `$1${newBody.replace(/\$/g, "$$$$")}$3`);
+  }
+  return null;
+}
+
+/** <Text testID="...">{APP_NAME}</Text> or {STRINGS.key} — patch the const string, not JSX. */
 function patchIdentifierRefText(
   content: string,
   testId: string,
@@ -469,8 +1134,12 @@ function patchIdentifierRefText(
   if (!bounds) return null;
   const trimmed = bounds.inner.trim();
   const m = trimmed.match(/^\{([A-Za-z_$][\w$]*)\}$/);
-  if (!m) return null;
-  return patchConstStringValue(content, m[1], oldText, newText);
+  if (m) return patchConstStringValue(content, m[1], oldText, newText);
+  const member = trimmed.match(/^\{([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)\}$/);
+  if (member) {
+    return patchObjectMemberString(content, member[1], member[2], oldText, newText);
+  }
+  return null;
 }
 
 function patchKeyedDataField(
@@ -492,21 +1161,40 @@ function patchObjectFieldById(
   fieldName: string,
   oldText: string,
   newText: string,
+  idOnly = false,
 ): string | null {
   const escapedId = idValue.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const needles = [oldText, stripEmoji(oldText)].filter(
-    (v, i, arr) => Boolean(v) && arr.indexOf(v) === i,
+  const blockRe = new RegExp(
+    `(id:\\s*['"]${escapedId}['"][\\s\\S]{0,1600}?${fieldName}:\\s*)(['"])([^'"]*)\\2`,
   );
-  for (const old of needles) {
-    const escapedOld = old.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const re = new RegExp(
-      `(id:\\s*['"]${escapedId}['"][\\s\\S]{0,1600}?${fieldName}:\\s*)(['"])${escapedOld}\\2`,
-      "g",
+
+  if (!idOnly) {
+    const needles = [oldText, stripEmoji(oldText)].filter(
+      (v, i, arr) => Boolean(v) && arr.indexOf(v) === i,
     );
-    if (!re.test(content)) continue;
-    return content.replace(re, `$1$2${newText}$2`);
+    for (const old of needles) {
+      const escapedOld = old.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const re = new RegExp(
+        `(id:\\s*['"]${escapedId}['"][\\s\\S]{0,1600}?${fieldName}:\\s*)(['"])${escapedOld}\\2`,
+        "g",
+      );
+      if (!re.test(content)) continue;
+      return content.replace(re, `$1$2${newText}$2`);
+    }
+
+    const block = blockRe.exec(content);
+    if (block) {
+      const current = block[3] ?? "";
+      const normalizedOld = (stripEmoji(oldText) || oldText).trim();
+      if (current.trim() === normalizedOld) {
+        return content.replace(blockRe, `$1$2${newText}$2`);
+      }
+    }
+    return null;
   }
-  return null;
+
+  if (!blockRe.test(content)) return null;
+  return content.replace(blockRe, `$1$2${newText}$2`);
 }
 
 function patchTapEditInFile(
@@ -586,7 +1274,7 @@ function patchTapEditInFile(
         touched = true;
         continue;
       }
-      if (!tag) continue;
+      if (!tag || isSharedMapTemplateElement(content, tag) || isCustomComponentTag(tag.tag)) continue;
       const next = patchStyleOnTag(opening, "backgroundColor", change.value);
       if (!next) continue;
       content = replaceTagAt(content, tag, next);
@@ -616,7 +1304,7 @@ function patchTapEditInFile(
         touched = true;
         continue;
       }
-      if (!tag) continue;
+      if (!tag || isSharedMapTemplateElement(content, tag) || isCustomComponentTag(tag.tag)) continue;
       const next = patchStyleOnTag(opening, "color", change.value);
       if (!next) continue;
       content = replaceTagAt(content, tag, next);
@@ -647,7 +1335,7 @@ function patchTapEditInFile(
         touched = true;
         continue;
       }
-      if (!tag) continue;
+      if (!tag || isSharedMapTemplateElement(content, tag) || isCustomComponentTag(tag.tag)) continue;
       const next =
         change.type === "fontFamily" && change.value === "System"
           ? stripStylePropOnTag(opening, "fontFamily")
@@ -675,6 +1363,31 @@ function replaceTagAt(
 
 function isContainerTag(tag: string): boolean {
   return /<(Pressable|View|TouchableOpacity)\b/.test(tag);
+}
+
+const NATIVE_TAGS = new Set([
+  "View",
+  "Text",
+  "Pressable",
+  "TouchableOpacity",
+  "TouchableHighlight",
+  "ScrollView",
+  "SafeAreaView",
+  "FlatList",
+  "SectionList",
+  "Image",
+  "ImageBackground",
+  "TextInput",
+  "KeyboardAvoidingView",
+  "Modal",
+  "Switch",
+  "ActivityIndicator",
+]);
+
+/** `<AppButton …>` — styling must happen inside the component file, not here. */
+function isCustomComponentTag(tag: string): boolean {
+  const name = tag.match(/^<(\w+)/)?.[1];
+  return Boolean(name && /^[A-Z]/.test(name) && !NATIVE_TAGS.has(name));
 }
 
 /** Split `meal-plan-mon` → prefix `meal-plan`, suffix `mon` (last segment only). */
@@ -1120,6 +1833,11 @@ function patchBackgroundByTestId(
 ): string | null {
   if (!testId || isBroadContainerTestId(testId)) return null;
 
+  for (const candidate of listItemStyleTestIdCandidates(testId, "backgroundColor")) {
+    const listPatched = patchListItemMapStyle(content, candidate, "backgroundColor", color);
+    if (listPatched) return listPatched;
+  }
+
   const mapPatched = patchMapItemBackground(content, testId, "backgroundColor", color);
   if (mapPatched) return mapPatched;
 
@@ -1129,6 +1847,13 @@ function patchBackgroundByTestId(
   const el = findOpeningTagAtTestId(content, testId);
   if (!el) return null;
 
+  if (isSharedMapTemplateElement(content, el)) return null;
+
+  // A custom component usage (<AppButton …>) takes no style prop here, and
+  // walking to the surrounding wrapper paints way more than the user tapped.
+  // The component-passthrough strategy patches inside the component instead.
+  if (isCustomComponentTag(el.tag)) return null;
+
   if (isContainerTag(el.tag)) {
     const patched = patchStyleOnTag(el.tag, "backgroundColor", color);
     if (!patched) return null;
@@ -1137,6 +1862,7 @@ function patchBackgroundByTestId(
 
   const container = findSmallestContainerBefore(content, el.end);
   if (!container) return null;
+  if (isSharedMapTemplateElement(content, container)) return null;
   const patched = patchStyleOnTag(container.tag, "backgroundColor", color);
   if (!patched) return null;
   return replaceTagAt(content, container, patched);
@@ -1162,15 +1888,23 @@ function patchMapItemBackground(
   if (!mapParam) return null;
 
   const target =
-    prop === "color" && /<Text\b/.test(templateEl.tag)
+    (prop === "color" || prop === "fontWeight" || prop === "fontFamily") &&
+    /<Text\b/.test(templateEl.tag)
       ? templateEl
       : isContainerTag(templateEl.tag)
         ? templateEl
         : findSmallestContainerBefore(content, templateEl.end);
   if (!target) return null;
 
-  const conditional = `{ ${mapParam} === '${dayValue}' && { ${prop}: '${color}' } }`;
-  const patched = appendConditionalStyle(target.tag, conditional, prop, mapParam, dayValue);
+  // Object iterators (`${habit.id}`) need `habit.id === 'h1'`; string iterators
+  // (`${day}`) compare the param directly.
+  const propRef = templateEl.tag.match(/\$\{(\w+)\.(\w+)[^}]*\}/);
+  const keyExpr =
+    propRef && propRef[1] === mapParam ? `${mapParam}.${propRef[2]}` : mapParam;
+
+  // No outer braces: inside a style array `{ cond && {...} }` is a syntax error.
+  const conditional = `${keyExpr} === '${dayValue}' && { ${prop}: '${color}' }`;
+  const patched = appendConditionalStyle(target.tag, conditional, prop, keyExpr, dayValue);
   if (!patched) return null;
   return replaceTagAt(content, target, patched);
 }
@@ -1198,10 +1932,14 @@ function findTemplateTestIdElement(
 }
 
 function findMapIteratorParamBefore(content: string, elStart: number): string | null {
-  const windowStart = Math.max(0, elStart - 900);
+  const windowStart = Math.max(0, elStart - 1500);
   const before = content.slice(windowStart, elStart);
-  const m = before.match(/\.map\(\s*\(\s*(\w+)\s*\)\s*=>/);
-  return m?.[1] ?? null;
+  // Match .map((habit) =>, .map((habit, index) =>, and .map(habit =>
+  const re = /\.map\(\s*(?:\(\s*(\w+)(?:\s*,\s*\w+)*\s*\)|(\w+))\s*=>/g;
+  let last: RegExpExecArray | null = null;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(before)) !== null) last = m;
+  return last ? (last[1] ?? last[2] ?? null) : null;
 }
 
 function appendConditionalStyle(
@@ -1227,7 +1965,9 @@ function appendConditionalStyle(
   } else if (cleaned.startsWith("{")) {
     replacement = `[${cleaned}, ${conditional}]`;
   } else {
-    replacement = `[${cleaned}, ${conditional}]`;
+    const arrowPatched = appendToArrowStyle(cleaned, conditional);
+    if (!arrowPatched && /=>/.test(cleaned)) return null;
+    replacement = arrowPatched ?? `[${cleaned}, ${conditional}]`;
   }
 
   return (
@@ -1243,8 +1983,11 @@ function stripConditionalStyle(
   mapParam: string,
   dayValue: string,
 ): string {
+  const keyEsc = mapParam.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const valEsc = dayValue.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  // Outer braces optional: handles both the old (broken) braced form and the new bare form.
   const re = new RegExp(
-    `,\\s*\\{\\s*${mapParam}\\s*===\\s*['"]${dayValue}['"]\\s*&&\\s*\\{\\s*${prop}\\s*:[^}]+\\}\\s*\\}`,
+    `,\\s*\\{?\\s*${keyEsc}\\s*===\\s*['"]${valEsc}['"]\\s*&&\\s*\\{\\s*${prop}\\s*:[^}]+\\}\\s*\\}?`,
     "g",
   );
   return styleExpr.replace(re, "");
@@ -1283,19 +2026,64 @@ function patchTextStyleByTestId(
       const scoped = patchTextColorInContainerByAnchor(content, testId, anchorText, value);
       if (scoped) return scoped;
     }
+    for (const candidate of listItemStyleTestIdCandidates(testId, "color")) {
+      const listPatched = patchListItemMapStyle(content, candidate, "color", value);
+      if (listPatched) return listPatched;
+    }
     const mapPatched = patchMapItemBackground(content, testId, "color", value);
     if (mapPatched) return mapPatched;
-  } else if (anchorText) {
-    const scoped = patchTextStyleInContainerByAnchor(content, testId, anchorText, prop, value);
-    if (scoped) return scoped;
+  } else {
+    // List-item conditional first: anchor fallback would style the shared template.
+    for (const candidate of listItemStyleTestIdCandidates(testId, prop)) {
+      const listPatched = patchListItemMapStyle(content, candidate, prop, value);
+      if (listPatched) return listPatched;
+    }
+    if (anchorText) {
+      const scoped = patchTextStyleInContainerByAnchor(content, testId, anchorText, prop, value);
+      if (scoped) return scoped;
+    }
   }
 
-  const el = findOpeningTagAtTestId(content, testId);
-  if (!el || !/<Text\b/.test(el.tag)) return null;
+  const el =
+    findOpeningTagAtTestId(content, testId) ??
+    findListItemTemplateElement(content, testId);
+  if (!el) return null;
+  // If the testID is on a non-Text element, look for the first Text in its subtree.
+  if (!/<Text\b/.test(el.tag)) {
+    const inner = findFirstTextInSubtree(content, el);
+    if (inner) {
+      const patched = patchStyleOnTag(inner.tag, prop, value);
+      if (patched) return replaceTagAt(content, inner, patched);
+    }
+    return null;
+  }
+
+  if (isSharedMapTemplateElement(content, el)) return null;
 
   const patched = patchStyleOnTag(el.tag, prop, value);
   if (!patched) return null;
   return replaceTagAt(content, el, patched);
+}
+
+/** Smallest Text descendant of an opening tag (used when testID sits on a container). */
+function findFirstTextInSubtree(
+  content: string,
+  container: { start: number; end: number; tag: string },
+): { start: number; end: number; tag: string } | null {
+  const re = /<Text\b/g;
+  let m: RegExpExecArray | null;
+  let best: { start: number; end: number; tag: string } | null = null;
+  let bestDistance = Infinity;
+  while ((m = re.exec(content)) !== null) {
+    if (m.index <= container.end) continue;
+    if (best && m.index - container.end > 4000) break;
+    const opening = walkBackToOpeningTag(content, m.index);
+    if (!opening) continue;
+    best = opening;
+    bestDistance = opening.start - container.end;
+    if (bestDistance < 200) break;
+  }
+  return best;
 }
 
 function patchTextStyleInContainerByAnchor(
@@ -1435,12 +2223,17 @@ function patchStyleSheetRuleProp(
   return content.replace(ruleRe, `${m[1]}${newBody}${m[3]}`);
 }
 
-/** Global cream/page color — `colors.background` in tokens.ts. */
+/** Global page color — `colors.groupedBackground` (or legacy `background`) in tokens.ts. */
 function patchThemeBackgroundToken(content: string, color: string): string | null {
-  if (!/\bexport const colors\b/.test(content)) return null;
-  const re = /^(\s*background:\s*["'])#[0-9A-Fa-f]{3,8}(["'],?\s*)$/m;
-  if (!re.test(content)) return null;
-  return content.replace(re, `$1${color}$2`);
+  if (!/\bexport (?:let|const) colors\b/.test(content)) return null;
+  for (const key of ["groupedBackground", "background"]) {
+    // Exclude `;`-terminated lines so we never rewrite the TYPE declaration
+    // (`groupedBackground: string;`) instead of the runtime value.
+    const re = new RegExp(`^(\\s*${key}:\\s*)((?!string\\b)[^,;\\n]+)(,\\s*)$`, "m");
+    if (!re.test(content)) continue;
+    return content.replace(re, `$1"${color}"$3`);
+  }
+  return null;
 }
 
 /** Root app shell — App.tsx outer View background. */
@@ -1502,6 +2295,8 @@ function patchBackgroundNearText(
   const container = findSmallestContainerBefore(content, anchorIdx);
   if (!container) return null;
 
+  if (isSharedMapTemplateElement(content, container)) return null;
+
   const patched = patchStyleOnTag(container.tag, "backgroundColor", color);
   if (!patched) return null;
   return content.slice(0, container.start) + patched + content.slice(container.end);
@@ -1562,21 +2357,35 @@ function findTextTagBefore(
   if (!last || last.index === undefined) return null;
 
   const absStart = windowStart + last.index;
-  let end = absStart + 1;
+  const end = scanOpeningTagEnd(content, absStart);
+  return { start: absStart, end, tag: content.slice(absStart, end) };
+}
+
+/**
+ * Index just past the `>` closing an opening tag at `start`. Tracks brace
+ * depth so `>` inside JSX expressions (`onPress={() => ...}`) is skipped.
+ */
+function scanOpeningTagEnd(content: string, start: number): number {
+  let end = start + 1;
   let quote: string | null = null;
+  let depth = 0;
   while (end < content.length) {
     const c = content[end];
     if (quote) {
       if (c === quote && content[end - 1] !== "\\") quote = null;
     } else if (c === '"' || c === "'" || c === "`") {
       quote = c;
-    } else if (c === ">") {
+    } else if (c === "{") {
+      depth++;
+    } else if (c === "}") {
+      depth--;
+    } else if (c === ">" && depth <= 0) {
       end++;
       break;
     }
     end++;
   }
-  return { start: absStart, end, tag: content.slice(absStart, end) };
+  return end;
 }
 
 function parseOpeningTagAt(
@@ -1584,20 +2393,7 @@ function parseOpeningTagAt(
   start: number,
 ): { start: number; end: number; tag: string } | null {
   if (content[start] !== "<") return null;
-  let end = start + 1;
-  let quote: string | null = null;
-  while (end < content.length) {
-    const c = content[end];
-    if (quote) {
-      if (c === quote && content[end - 1] !== "\\") quote = null;
-    } else if (c === '"' || c === "'" || c === "`") {
-      quote = c;
-    } else if (c === ">") {
-      end++;
-      break;
-    }
-    end++;
-  }
+  const end = scanOpeningTagEnd(content, start);
   return { start, end, tag: content.slice(start, end) };
 }
 
@@ -1615,7 +2411,13 @@ function findSmallestContainerBefore(
 ): { start: number; end: number; tag: string } | null {
   const windowStart = Math.max(0, anchorIndex - 3000);
   const before = content.slice(windowStart, anchorIndex);
-  const tagRe = /<(Pressable|View|TouchableOpacity)\b/g;
+  // Match ANY opening tag whose name starts with an uppercase letter — that
+  // covers native containers (View, Pressable, …) AND custom components
+  // (Card, AppButton, SettingsRow) which are the actual scoped wrapper in
+  // the user's app. Limiting to native-only tags used to skip past
+  // `<Card testID="home-stat-total">` and land on `<View testID="home-stats">`,
+  // painting the whole row.
+  const tagRe = /<[A-Z]\w*\b/g;
   let best: { start: number; end: number; tag: string } | null = null;
   let bestSpan = Infinity;
   let m: RegExpExecArray | null;
@@ -1628,12 +2430,21 @@ function findSmallestContainerBefore(
     if (span < 10 || span > 4500) continue;
     const testId = extractTestIdFromTag(parsed.tag);
     if (testId && isBroadContainerTestId(testId)) continue;
+    // Avoid painting the ROOT screen container or app shell by accident.
+    const name = parsed.tag.match(/^<(\w+)/)?.[1] ?? "";
+    if (isAppShellTag(name, parsed.tag)) continue;
     if (span < bestSpan) {
       bestSpan = span;
       best = parsed;
     }
   }
   return best;
+}
+
+function isAppShellTag(name: string, tag: string): boolean {
+  // `Screen`, `App`, root layout wrappers. They sit just inside the file
+  // and would otherwise capture every "background" tap.
+  return /^(Screen|App|Root)$/.test(name) || /\btestID="[^"]*-screen"/.test(tag);
 }
 
 function stripEmoji(text: string): string {
@@ -1659,6 +2470,9 @@ function patchTextReplaceWithTestId(
   newText: string,
 ): string | null {
   if (testId && !isBroadContainerTestId(testId)) {
+    const listPatched = patchListItemDataField(content, testId, oldText, newText);
+    if (listPatched) return listPatched;
+
     const dataPatched = patchKeyedDataField(content, testId, oldText, newText);
     if (dataPatched) return dataPatched;
 
@@ -2162,21 +2976,7 @@ function walkBackToOpeningTag(
   while (start > 0 && content[start] !== "<") start--;
   if (content[start] !== "<") return null;
 
-  let end = start + 1;
-  let quote: string | null = null;
-  while (end < content.length) {
-    const c = content[end];
-    if (quote) {
-      if (c === quote && content[end - 1] !== "\\") quote = null;
-    } else if (c === '"' || c === "'" || c === "`") {
-      quote = c;
-    } else if (c === ">") {
-      end++;
-      break;
-    }
-    end++;
-  }
-
+  const end = scanOpeningTagEnd(content, start);
   return { start, end, tag: content.slice(start, end) };
 }
 
@@ -2205,6 +3005,9 @@ function findOpeningTagAtTestId(
   // Runtime IDs from templates like `week-day-${day}` → week-day-Tue
   const templateEl = findTemplateTestIdElement(content, testId);
   if (templateEl) return templateEl;
+
+  const listItemEl = findListItemTemplateElement(content, testId);
+  if (listItemEl) return listItemEl;
 
   const dynamic = splitDynamicTestId(testId);
   if (dynamic) {
@@ -2248,6 +3051,33 @@ function findOpeningTagAtTestId(
   return null;
 }
 
+/**
+ * Function styles — `style={({ pressed }) => [styles.row, pressed && styles.pressed]}` —
+ * must get additions INSIDE the returned array. RN silently ignores a function
+ * nested in a style array, so wrapping would "save" with zero visual effect.
+ */
+function appendToArrowStyle(inner: string, addition: string): string | null {
+  const arrow =
+    inner.match(/^(\(\s*\{?[^)]*\}?\s*\)\s*=>\s*)([\s\S]*)$/) ??
+    inner.match(/^([A-Za-z_$][\w$]*\s*=>\s*)([\s\S]*)$/);
+  if (!arrow) return null;
+  const head = arrow[1];
+  let body = arrow[2].trim();
+  const parenWrapped = body.startsWith("(") && body.endsWith(")");
+  if (parenWrapped) body = body.slice(1, -1).trim();
+
+  let newBody: string;
+  if (body.startsWith("[") && body.endsWith("]")) {
+    const arrBody = body.slice(1, -1).trim();
+    newBody = arrBody ? `[${arrBody}, ${addition}]` : `[${addition}]`;
+  } else if (body && !body.startsWith("{")) {
+    newBody = `[${body}, ${addition}]`;
+  } else {
+    return null;
+  }
+  return `${head}${parenWrapped ? `(${newBody})` : newBody}`;
+}
+
 function patchStyleOnTag(tag: string, prop: StyleProp, value: string): string | null {
   const override = formatStyleOverride(prop, value);
   const styleRange = findStyleAttribute(tag);
@@ -2268,7 +3098,9 @@ function patchStyleOnTag(tag: string, prop: StyleProp, value: string): string | 
   } else if (inner.startsWith("{")) {
     replacement = mergeStyleObject(inner, prop, value);
   } else {
-    replacement = `[${inner}, ${override}]`;
+    const arrowPatched = appendToArrowStyle(stripStyleOverrideFromArray(inner, prop), override);
+    replacement = arrowPatched ?? `[${inner}, ${override}]`;
+    if (!arrowPatched && /=>/.test(inner)) return null;
   }
 
   return (

@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { ActionSheetIOS, Modal, Platform, Pressable, StyleSheet, Text, View } from "react-native";
-import { colors, spacing, type as typeScale } from "../theme/tokens.js";
+import { colors, spacing, type as typeScale } from "../theme/tokens";
 
 export type ActionMenuOption = {
   label: string;

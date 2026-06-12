@@ -40,6 +40,11 @@ try {
 }
 
 const scaffoldFiles = [
+  "app.json",
+  "app/_layout.tsx",
+  "app/(tabs)/_layout.tsx",
+  "app/(tabs)/index.tsx",
+  "app/(tabs)/settings.tsx",
   "src/theme/tokens.ts",
   "src/lib/auth.ts",
   "src/lib/storage.ts",
@@ -68,7 +73,7 @@ for (const rel of scaffoldFiles) {
 }
 
 sh(
-  `docker exec ${container} sh -c "cd /app && npx expo install @expo/vector-icons expo-font expo-haptics expo-blur expo-symbols expo-status-bar @react-native-community/datetimepicker"`,
+  `docker exec ${container} sh -c "cd /app && npx expo install expo-router react-native-screens react-native-safe-area-context expo-linking expo-constants @expo/vector-icons expo-font expo-haptics expo-blur expo-symbols expo-status-bar @react-native-community/datetimepicker"`,
 );
-sh(`docker exec ${container} touch /app/index.ts`);
-console.log("\niOS scaffold seeded. Rebuild the app or ask Build chat to wire auth + screens.");
+sh(`docker exec ${container} touch /app/app/_layout.tsx`);
+console.log("\niOS scaffold seeded. Rebuild the app or ask Build chat to wire auth + routes.");

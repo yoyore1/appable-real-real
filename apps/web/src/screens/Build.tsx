@@ -27,6 +27,7 @@ import {
   fontPresetFromComputed,
   fontPresetLabel,
   isBoldWeight,
+  parseListFieldStorageSync,
   type TapFontPreset,
 } from "../tapEditStyle.js";
 
@@ -311,7 +312,7 @@ export function Build({
     const hasColor = draftColor !== rgbToHex(tapped.color);
     const hasText = partUpdates.length > 0;
     const hasFont = draftBold !== originalBold || draftFont !== originalFont;
-    const target =
+    const styleTarget =
       tapped.backgroundOnly && screenBg
         ? `the main screen background`
         : tapped.backgroundOnly && tapped.boxTestId
@@ -319,27 +320,31 @@ export function Build({
           : tapped.backgroundOnly && bgAnchor
             ? `the card container for "${bgAnchor}"`
             : hasText && tapped.textTestId
-        ? `the element with testID "${tapped.textTestId}"`
-        : (hasColor || hasFont) && !hasBg && tapped.textTestId
-          ? `the element with testID "${tapped.textTestId}"`
-          : hasColor && hasBg && tapped.boxTestId
-            ? `the element with testID "${tapped.boxTestId}"`
-            : hasColor && tapped.boxTestId
-              ? `the element with testID "${tapped.boxTestId}"`
-              : hasBg && tapped.boxTestId
-                ? `the element with testID "${tapped.boxTestId}"`
-                : hasBg && tapped.textTestId
-                  ? `the element with testID "${tapped.textTestId}"`
-                  : hasFont && tapped.textTestId
+              ? `the element with testID "${tapped.textTestId}"`
+              : (hasColor || hasFont) && !hasBg && tapped.textTestId
+                ? `the element with testID "${tapped.textTestId}"`
+                : hasBg && tapped.boxTestId
+                  ? `the element with testID "${tapped.boxTestId}"`
+                  : hasBg && tapped.textTestId
                     ? `the element with testID "${tapped.textTestId}"`
-                    : hasBg && label
-                      ? `the card container for "${label}"`
-                      : tapped.textTestId
-                        ? `the element with testID "${tapped.textTestId}"`
-                        : label
-                          ? `the ${tapped.tag} element showing "${label}"`
-                          : `the ${tapped.tag} element`;
-    const message = `[Tap edit] In the app, find ${target} and ${changes.join("; ")}. Change only what was tapped.`;
+                    : hasFont && tapped.textTestId
+                      ? `the element with testID "${tapped.textTestId}"`
+                      : hasBg && label
+                        ? `the card container for "${label}"`
+                        : tapped.textTestId
+                          ? `the element with testID "${tapped.textTestId}"`
+                          : label
+                            ? `the ${tapped.tag} element showing "${label}"`
+                            : `the ${tapped.tag} element`;
+    const message = `[Tap edit] In the app, find ${styleTarget} and ${changes.join("; ")}. Change only what was tapped.`;
+
+    const savedText = draftTexts.find((t, i) => !partIsIcon[i] && t.trim())?.trim();
+    if (savedText && tapped.textTestId) {
+      const sync = parseListFieldStorageSync(tapped.textTestId, savedText);
+      if (sync) {
+        postToPreview({ type: "appable:sync-storage-field", ...sync });
+      }
+    }
 
     s.appendLocal("build", friendlyTapEditMessage(changes));
     s.send({ type: "chat.send", conversation: "build", text: message });

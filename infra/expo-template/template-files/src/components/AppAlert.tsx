@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { Alert, Modal, Platform, StyleSheet, Text, View } from "react-native";
-import { AppButton } from "./AppButton.js";
-import { colors, layout, radius, spacing, type as typeScale } from "../theme/tokens.js";
+import { AppButton } from "./AppButton";
+import { colors, layout, radius, spacing, type as typeScale } from "../theme/tokens";
 
 type Button = { text: string; style?: "default" | "cancel" | "destructive"; onPress?: () => void };
 

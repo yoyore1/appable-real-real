@@ -6,11 +6,22 @@ import { env } from "./env.js";
 import { scheduleBrainstormSnapshotRefresh } from "./brainstormSnapshot.js";
 import { emit } from "./events.js";
 import {
+  APP_LAYOUT_PATH,
   BRIDGE_FILENAME,
   isBridgeBundleError,
   loadBridgeSource,
+  normalizeAppLayout,
   normalizeIndexTs,
 } from "./platformGlue.js";
+import {
+  generateStackLayoutContent,
+  generateTabsLayoutContent,
+  listTabsScreenNames,
+  migrateRogueTabRoutes,
+  normalizeRootLayoutForStack,
+  STACK_LAYOUT_PATH,
+  TABS_LAYOUT_PATH,
+} from "./routerGlue.js";
 
 /**
  * Container lifecycle for project workspaces.
@@ -324,10 +335,7 @@ function urlsToEvent(urls: PreviewInfo): { webUrl: string; expUrl: string } {
 /** Tap-to-edit bridge source lives in infra/expo-template/template-files/appable-bridge.js */
 
 
-/**
- * Restore platform-owned glue: bridge file, index import, remove agent metro configs.
- * Idempotent — safe before every verify and after container start.
- */
+/** Restore platform-owned glue: bridge file, entry layouts, remove agent metro configs. */
 export async function repairPlatformGlue(projectId: string): Promise<void> {
   try {
     const bridge = loadBridgeSource();
@@ -344,6 +352,14 @@ export async function repairPlatformGlue(projectId: string): Promise<void> {
       }
     }
 
+    const appLayout = await readProjectFile(projectId, APP_LAYOUT_PATH).catch(() => null);
+    if (appLayout !== null) {
+      const normalized = normalizeAppLayout(appLayout);
+      if (normalized !== appLayout) {
+        await writeProjectFile(projectId, APP_LAYOUT_PATH, normalized);
+      }
+    }
+
     for (const cfg of ["metro.config.js", "metro.config.ts", "metro.config.mjs", "metro.config.cjs"]) {
       const has = await readProjectFile(projectId, cfg).catch(() => null);
       if (has !== null) {
@@ -352,9 +368,47 @@ export async function repairPlatformGlue(projectId: string): Promise<void> {
       }
     }
 
-    await execInProject(projectId, ["touch", "index.ts", BRIDGE_FILENAME]).catch(() => {});
+    await repairV2Router(projectId);
+
+    const touchTargets = [BRIDGE_FILENAME, "index.ts", APP_LAYOUT_PATH].filter(Boolean);
+    await execInProject(projectId, ["touch", ...touchTargets]).catch(() => {});
   } catch (err) {
     console.warn(`[platform] repairPlatformGlue failed for ${projectId}:`, err);
+  }
+}
+
+/** Repair v2 Expo Router: stack group, tab layout, migrate rogue tab routes. */
+async function repairV2Router(projectId: string): Promise<void> {
+  try {
+    const hasRouter = await readProjectFile(projectId, APP_LAYOUT_PATH).catch(() => null);
+    if (hasRouter === null) return;
+
+    await writeProjectFile(projectId, STACK_LAYOUT_PATH, generateStackLayoutContent());
+
+    const moved = await migrateRogueTabRoutes(projectId, {
+      listProjectFiles,
+      readProjectFile,
+      writeProjectFile,
+      deleteProjectFile,
+    });
+    if (moved.length > 0) {
+      console.log(`[router] migrated ${moved.length} route(s) to (stack) for ${projectId}`);
+    }
+
+    const remaining = await listTabsScreenNames(projectId, listProjectFiles);
+    const hidden = remaining.filter((n) => n !== "index" && n !== "settings");
+    const tabsLayout = generateTabsLayoutContent(hidden);
+    const existingTabs = await readProjectFile(projectId, TABS_LAYOUT_PATH).catch(() => "");
+    if (existingTabs !== tabsLayout) {
+      await writeProjectFile(projectId, TABS_LAYOUT_PATH, tabsLayout);
+    }
+
+    const rootLayout = normalizeRootLayoutForStack(hasRouter);
+    if (rootLayout !== hasRouter) {
+      await writeProjectFile(projectId, APP_LAYOUT_PATH, rootLayout);
+    }
+  } catch (err) {
+    console.warn(`[router] repairV2Router failed for ${projectId}:`, err);
   }
 }
 
@@ -502,7 +556,7 @@ export async function listProjectFiles(projectId: string): Promise<string[]> {
 }
 
 function normalizeProjectPath(p: string): string {
-  const cleaned = p.replace(/\\/g, "/").replace(/^\/+/, "").replace(/^app\//, "");
+  const cleaned = p.replace(/\\/g, "/").replace(/^\/+/, "");
   if (cleaned.includes("..") || cleaned.includes("'")) {
     throw new Error(`Unsafe path: ${p}`);
   }
@@ -535,6 +589,20 @@ function demuxLogBuffer(buf: Buffer): string {
 }
 
 /**
+ * Metro bundle entry paths — v1 uses index.ts; v2 Expo Router uses expo-router/entry.
+ */
+async function bundleCheckPaths(projectId: string): Promise<string[]> {
+  const hasRouterLayout = await readProjectFile(projectId, "app/_layout.tsx").catch(() => null);
+  if (hasRouterLayout) {
+    return [
+      "node_modules/expo-router/entry.bundle?platform=web&dev=true",
+      "index.bundle?platform=web&dev=true",
+    ];
+  }
+  return ["index.ts.bundle?platform=web&dev=true"];
+}
+
+/**
  * Force Metro to actually compile the web bundle and report any error.
  * Without this, builds can look "clean" simply because nothing requested
  * a bundle yet. Returns null when the bundle compiles.
@@ -543,17 +611,29 @@ export async function checkBundle(projectId: string): Promise<string | null> {
   const db = getDb();
   const project = await db.project.findUnique({ where: { id: projectId } });
   if (!project?.metroPort) return null;
-  try {
-    const res = await fetch(
-      `http://127.0.0.1:${project.metroPort}/index.ts.bundle?platform=web&dev=true`,
-      { signal: AbortSignal.timeout(180_000) },
-    );
-    const body = await res.text();
-    if (!res.ok) return parseBundleErrorBody(body, res.status);
-    return inspectBundleBody(body);
-  } catch (err) {
-    return `Bundle check failed: ${err instanceof Error ? err.message : String(err)}`;
+
+  let lastError: string | null = null;
+  for (const path of await bundleCheckPaths(projectId)) {
+    try {
+      const res = await fetch(`http://127.0.0.1:${project.metroPort}/${path}`, {
+        signal: AbortSignal.timeout(180_000),
+      });
+      const body = await res.text();
+      if (!res.ok) {
+        lastError = parseBundleErrorBody(body, res.status);
+        continue;
+      }
+      const inspected = inspectBundleBody(body);
+      if (inspected) {
+        lastError = inspected;
+        continue;
+      }
+      return null;
+    } catch (err) {
+      lastError = `Bundle check failed: ${err instanceof Error ? err.message : String(err)}`;
+    }
   }
+  return lastError;
 }
 
 const MIN_BUNDLE_BYTES = 8_000;
@@ -693,8 +773,9 @@ export async function restoreCheckpoint(projectId: string, checkpointId: string)
 
 /** Nudge Metro to rebundle after git reset (watchers often miss `git reset`). */
 export async function invalidateMetroBundle(projectId: string): Promise<void> {
-  await execInProject(projectId, ["touch", "index.ts"]).catch(() => {});
-  await execInProject(projectId, ["touch", "appable-bridge.js"]).catch(() => {});
+  await execInProject(projectId, ["touch", "index.ts", "app/_layout.tsx", "appable-bridge.js"]).catch(
+    () => {},
+  );
 }
 
 /**

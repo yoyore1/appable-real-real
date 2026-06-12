@@ -41,7 +41,13 @@ Before screens, use iOS template components in src/components/ + tokens.ts:
   SettingsRow: testID on row, label, value, chevron. Never hide labels in wrappers.`;
 
 export const FILE_LAYOUT_RULES = `## RULE 3 — FILE LAYOUT
-- Code ONLY in: App.tsx, src/screens/, src/components/, src/lib/, src/theme/.
+- Tab bar = TWO routes ONLY: app/(tabs)/index.tsx (Home) and app/(tabs)/settings.tsx.
+- ALL other screens go in app/(stack)/ — e.g. app/(stack)/habits.tsx, app/(stack)/streak/[id].tsx.
+  Navigate with router.push('/habits') or router.push(\`/streak/\${id}\`). Never add tab-bar routes.
+- Code also in: src/components/, src/lib/, src/theme/.
+- Do NOT edit app/_layout.tsx, app/(tabs)/_layout.tsx, or app/(stack)/_layout.tsx — platform-owned.
+- Relative imports to src/: \`../../src/...\` from \`app/(tabs)/*.tsx\` or \`app/(stack)/*.tsx\`;
+  \`../../../src/...\` from one nested folder (e.g. \`app/(stack)/streak/[id].tsx\`).
 - Do NOT use /features/ or other folder conventions.
 - Keep files focused; do NOT split aggressively if splitting would create split Text nodes
   or missing testIDs. Edit-contract integrity beats line-count purity.`;
@@ -131,7 +137,7 @@ audienceRoles: ${JSON.stringify(roles)}
 1. Sign in (src/lib/auth.ts) — testID: auth-sign-in, auth-email, auth-name
 2. Sign out in Settings — testID: settings-sign-out
 3. Delete account in Settings (confirm, wipe data) — testID: settings-delete-account
-4. App.tsx gates: !session → auth flow, else main app
+4. Root route gates auth: !session → auth flow, else main tabs
 ${roleBlock}`;
 }
 

@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Pressable, StyleSheet, Text, View } from "react-native";
-import { hapticLight } from "../lib/haptics.js";
-import { colors, layout, type as typeScale } from "../theme/tokens.js";
+import { hapticLight } from "../lib/haptics";
+import { colors, layout, type as typeScale } from "../theme/tokens";
 
 type Props = {
   testID: string;

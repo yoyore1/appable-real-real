@@ -13,10 +13,11 @@ like a human-designed App Store product — never generic AI slop.
 ${codeDisciplinePrompt(spec)}
 
 ## The project you are working in
-- Expo SDK app, TypeScript, already running with hot reload (Metro).
+- Expo SDK app with Expo Router (TypeScript), already running with hot reload (Metro).
 - Current files (node_modules excluded):
 ${files.map((f) => `  - ${f}`).join("\n")}
-- The entry point is App.tsx. Keep everything reachable from there.
+- Routes: app/(tabs)/index.tsx + settings.tsx (tab bar); app/(stack)/ for every other screen.
+- platform owns app/_layout.tsx, tab _layout, and stack _layout.
 - react-native-web is installed; the app must render correctly on web too,
   because the customer's preview is the web build in a phone frame.
 - Scaffold includes src/theme/tokens.ts (iOS semantic colors + applyBrandPrimary),
@@ -33,8 +34,10 @@ ${PLATFORM_AGENT_RULES}
    Then immediately start executing with tools. Do not wait for approval.
 2. Use ONLY dependencies already in the golden template. Do NOT run npm install.
 3. Write complete files with write_file — never fragments or diffs.
-4. Code ONLY in App.tsx, src/screens/, src/components/, src/lib/, src/theme/.
-5. Use React Navigation ONLY if already installed; otherwise state-based nav in App.tsx.
+4. Code in app/(tabs)/ (Home + Settings only), app/(stack)/ (all other screens),
+   src/components/, src/lib/, src/theme/.
+5. Do NOT edit app/_layout.tsx, app/(tabs)/_layout.tsx, or app/(stack)/_layout.tsx —
+   platform owns navigation shell.
 6. PERSIST USER DATA via AsyncStorage + src/lib/storage.ts pattern: load on mount,
    save on every change. Works on web (localStorage) with the same code paths.
 7. Style with StyleSheet.create + src/theme/tokens.ts. FIRST build step on tokens:
@@ -54,11 +57,12 @@ ${PLATFORM_AGENT_RULES}
    - Colors/backgrounds: inline override or dedicated style on THAT node.
    - NEVER split one title across multiple Text nodes to color part of a word.
    - Card/row Pressable wrappers for background color edits need testID on the container.
-   - Never touch appable-bridge.js or its import in index.ts.
+   - Never touch appable-bridge.js or platform layout files (app/_layout.tsx, tab _layout).
 8. Complete Rule 7 self-review BEFORE calling read_build_logs or saying BUILD COMPLETE.
 9. After writing the app, call read_build_logs to verify bundle + preview. Fix every error.
 10. When logs are clean and Rule 7 passes, reply with plain-text summary starting with "BUILD COMPLETE:".
-11. v2 will use native tab/stack (Layer 2) — stay compatible; use bottom tabs in App.tsx for now.
+11. Tab bar = Home + Settings only. Add habits, detail, legal, forms under app/(stack)/
+    and link with router.push('/screen-name'). Never create app/(tabs)/habits.tsx etc.
 
 ## The app spec
 ${JSON.stringify(spec, null, 2)}
@@ -110,8 +114,9 @@ ${iosFeelEditPrompt()}
    Color changes go on that specific Text or container (inline override), not
    a shared StyleSheet entry other siblings reuse unless the whole theme
    should change.
-9. Never touch the file appable-bridge.js or its import in index.ts.
-10. After your edit, a hygiene pass re-checks the whole app for tap-to-edit
+9. Never touch appable-bridge.js or platform layout files (app/_layout.tsx, tab _layout, stack _layout).
+10. New screens belong in app/(stack)/ unless editing Home or Settings tab roots.
+11. After your edit, a hygiene pass re-checks the whole app for tap-to-edit
     problems (testIDs, split labels, data layout). Write code that passes rule 7b
     so hygiene does not have to rewrite your work.
 
@@ -133,8 +138,8 @@ ${slopPreventionEditPrompt()}
 
 ${iosFeelEditPrompt()}
 
-If the error mentions appable-bridge or index.ts entry: do NOT edit those files —
-fix the actual app bug in App.tsx / src/. read_build_logs auto-repairs platform glue.
+If the error mentions appable-bridge or router layouts: do NOT edit those files —
+fix the actual app bug in app/(tabs)/ or src/. read_build_logs auto-repairs platform glue.
 
 App spec for context: ${JSON.stringify({ name: spec.name, screens: spec.screens.map((s) => s.name) })}`;
 }
@@ -153,8 +158,8 @@ Metro is ALREADY running — do not start expo again. SMALLEST edits only.
 
 ## Fix every audit issue using rule 7b
 - Missing testID: add kebab-case testID on each user-visible Text and on mapped
-  row Pressable/TouchableOpacity (e.g. testID={\`recipe-title-\${recipe.id}\`},
-  testID={\`tab-\${tab.id}\`}, testID={\`meal-plan-\${day.toLowerCase()}\`}).
+  row Pressable/TouchableOpacity (e.g. testID={\`home-habit-\${habit.id}-name\`} for
+  {habit.name}, testID={\`recipe-title-\${recipe.id}\`} for {recipe.title}).
 - Split title / renderTitle() / title.split(): one Text with {item.title} or
   literal; put strings in src/lib/storage.ts (or tabs array), not JSX fragments.
 - day === 'Mon' ? "Monday" : day (day-display-hack): replace with plain {day};
@@ -162,8 +167,8 @@ Metro is ALREADY running — do not start expo again. SMALLEST edits only.
 - Icon + label: flexDirection row (beside), separate Text nodes with testIDs.
 - Recipe/tab renames: title/label in defaultData or tabs array, UI shows {title}.
 - Never split one word across Text nodes for partial color.
-- Card/row Pressable for background edits: testID on the container.
-- Never touch appable-bridge.js or its import in index.ts.
+- Card/row Pressable for background edits: testID={\`{prefix}-\${item.id}-row\`} (or -card).
+- Never touch appable-bridge.js or platform layout files (app/_layout.tsx, tab _layout).
 - Do not change unrelated styling, navigation, or business logic.
 
 Read affected files with read_file, write complete files with write_file.

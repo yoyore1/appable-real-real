@@ -1,5 +1,5 @@
 import { StyleSheet, View, type ViewProps } from "react-native";
-import { spacing } from "../theme/tokens.js";
+import { spacing } from "../theme/tokens";
 
 type Props = ViewProps & {
   testID?: string;

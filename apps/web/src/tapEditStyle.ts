@@ -41,3 +41,23 @@ export function fontPresetFromComputed(fontFamily: string): TapFontPreset {
 export function fontPresetLabel(preset: TapFontPreset): string {
   return TAP_FONT_OPTIONS.find((o) => o.id === preset)?.label ?? "Default";
 }
+
+/** Sync AsyncStorage/localStorage when a list-item name field is tap-edited. */
+export function parseListFieldStorageSync(
+  testId: string | null | undefined,
+  value: string,
+): { recordId: string; field: string; value: string } | null {
+  if (!testId) return null;
+  const nameMatch =
+    testId.match(/home-habit-([^-]+)-name$/) ??
+    testId.match(/habit-([^-]+)-name$/);
+  if (nameMatch) {
+    return { recordId: nameMatch[1], field: "name", value };
+  }
+  const titleMatch =
+    testId.match(/home-habit-([^-]+)-title$/) ?? testId.match(/habit-([^-]+)-title$/);
+  if (titleMatch) {
+    return { recordId: titleMatch[1], field: "title", value };
+  }
+  return null;
+}

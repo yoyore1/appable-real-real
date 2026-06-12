@@ -1,5 +1,5 @@
 import { Pressable, StyleSheet, View, type ViewProps } from "react-native";
-import { colors, radius, spacing } from "../theme/tokens.js";
+import { colors, radius, spacing } from "../theme/tokens";
 
 type Props = ViewProps & {
   testID?: string;

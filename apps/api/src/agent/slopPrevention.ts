@@ -11,8 +11,8 @@ Hierarchy when rules conflict: **edit contract > numeric budgets > soft guidance
 export const TEMPLATE_NOT_GENERATED = `### Cause 1 — Template owns setup (do NOT regenerate)
 Golden template already provides: iOS tokens (PlatformColor behind Platform.OS === "ios" only — never bare PlatformColor or web preview breaks),
 base components (Screen, GroupedSection, SettingsRow, AppButton, Sheet, AppAlert, etc.),
-bridge + index import, App.tsx state navigation shell. Metro/babel/bridge are platform-owned.
-Generate ONLY app-specific: entities, seed data, screens, interactions, motion.
+bridge + router layouts (app/_layout.tsx, tab _layout). Metro/babel/bridge are platform-owned.
+Generate ONLY app-specific: entities, seed data, routes under app/(tabs)/, interactions, motion.
 If two apps would need identical code, it belongs in template — not your build.`;
 
 export const NUMERIC_BUDGETS = `### Cause 2 — Numeric budgets (not taste)

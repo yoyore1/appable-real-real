@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { StyleSheet, Text, View } from "react-native";
-import { colors, spacing, type as typeScale } from "../theme/tokens.js";
-import { AppButton } from "./AppButton.js";
+import { colors, spacing, type as typeScale } from "../theme/tokens";
+import { AppButton } from "./AppButton";
 
 type Props = {
   testID: string;

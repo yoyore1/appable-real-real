@@ -1,5 +1,5 @@
 import { Platform, SafeAreaView, ScrollView, StyleSheet, Text, View, type ViewProps } from "react-native";
-import { colors, layout, spacing, type as typeScale } from "../theme/tokens.js";
+import { colors, layout, spacing, type as typeScale } from "../theme/tokens";
 
 type Props = ViewProps & {
   scroll?: boolean;

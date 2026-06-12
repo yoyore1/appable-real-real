@@ -1,4 +1,4 @@
-/* Appable edit bridge - auto-generated, do not edit. v13 */
+/* Appable edit bridge - auto-generated, do not edit. v14 */
 /* eslint-disable */
 if (
   typeof document !== "undefined" &&
@@ -65,6 +65,17 @@ if (
 
   function testIdOn(el) {
     return el && el.getAttribute ? el.getAttribute("data-testid") : null;
+  }
+
+  function isNonEditable(el) {
+    var cur = el;
+    var steps = 0;
+    while (cur && cur !== document.body && steps < 16) {
+      if (cur.getAttribute && cur.getAttribute("data-appable") === "non-editable") return true;
+      cur = cur.parentElement;
+      steps++;
+    }
+    return false;
   }
 
   /** Prefer the nearest specific testID, not a screen-level parent. */
@@ -381,6 +392,9 @@ if (
     var boxTestId = findNearestTestId(bgEl);
     if (boxTestId && isBroadTestId(boxTestId)) boxTestId = null;
     var anchor = bestResolved ? bestResolved.text : boxLabel;
+    var backgroundOnly = parts.length === 0;
+    var screenBackground =
+      backgroundOnly && (!boxTestId || isBroadTestId(findNearestTestId(bgEl) || ""));
     return {
       root: styleEl,
       parts: parts,
@@ -390,6 +404,8 @@ if (
       testId: boxTestId || textTestId,
       styleEl: styleEl,
       bgEl: bgEl,
+      backgroundOnly: backgroundOnly,
+      screenBackground: screenBackground,
     };
   }
 
@@ -403,7 +419,8 @@ if (
       textTestId: pick.textTestId,
       boxTestId: pick.boxTestId,
       anchorLabel: pick.anchorLabel || shortLabel(pick.parts[0] && pick.parts[0].text),
-      backgroundOnly: pick.parts.length === 0,
+      backgroundOnly: Boolean(pick.backgroundOnly),
+      screenBackground: Boolean(pick.screenBackground),
       text: pick.parts.length === 1 ? pick.parts[0].text : "",
       textParts: pick.parts.map(function (p) {
         return { text: p.text, isIcon: Boolean(p.isIcon) };
@@ -434,7 +451,25 @@ if (
 
   window.addEventListener("message", function (e) {
     var msg = e.data || {};
-    if (msg.type === "appable:edit-mode") {
+    if (msg.type === "appable:sync-storage-field") {
+      var storageKey = "appdata";
+      try {
+        var raw = localStorage.getItem(storageKey);
+        if (!raw) return;
+        var data = JSON.parse(raw);
+        if (!data || !Array.isArray(data.habits) || !msg.recordId) return;
+        var field = msg.field || "name";
+        for (var hi = 0; hi < data.habits.length; hi++) {
+          if (data.habits[hi].id === msg.recordId) {
+            data.habits[hi][field] = msg.value;
+            localStorage.setItem(storageKey, JSON.stringify(data));
+            break;
+          }
+        }
+      } catch (syncErr) {
+        /* ignore */
+      }
+    } else if (msg.type === "appable:edit-mode") {
       editMode = Boolean(msg.on);
       if (!editMode) clearHighlight();
       document.body.style.cursor = editMode ? "crosshair" : "";
@@ -477,6 +512,9 @@ if (
       if (!editMode) return;
       e.preventDefault();
       e.stopPropagation();
+      var clickEl = e.target;
+      if (clickEl && clickEl.nodeType === 3) clickEl = clickEl.parentElement;
+      if (isNonEditable(clickEl)) return;
       var pick = pickTarget(e.target, e.clientX, e.clientY);
       if (!pick || !pick.root) return;
       clearHighlight();

@@ -81,7 +81,7 @@ export async function auditDesignQuality(
   if (normalized.some((f) => f.startsWith("src/features/"))) {
     issues.push({
       kind: "features-folder",
-      snippet: "src/features/ detected — use src/screens/, src/components/, src/lib/ only.",
+      snippet: "src/features/ detected — use app/(tabs)/, src/components/, src/lib/ only.",
     });
   }
 

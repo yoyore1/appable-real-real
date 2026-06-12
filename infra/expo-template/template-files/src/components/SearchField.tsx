@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useState } from "react";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
-import { colors, radius, spacing, type as typeScale } from "../theme/tokens.js";
+import { colors, radius, spacing, type as typeScale } from "../theme/tokens";
 
 type Props = {
   testID: string;

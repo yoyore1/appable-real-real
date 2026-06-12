@@ -8,6 +8,7 @@ const CACHE_TTL_SEC = 60 * 60 * 24 * 30;
 
 const SNAPSHOT_FILES = [
   /^App\.tsx$/,
+  /^app\/\(tabs\)\/.+\.tsx$/,
   /^src\/screens\/.+\.tsx$/,
   /^src\/components\/TabBar\.tsx$/,
   /^src\/lib\/.+\.(ts|tsx)$/,
@@ -41,18 +42,22 @@ async function buildLiveSnapshot(projectId: string): Promise<string | null> {
   } catch {
     return null;
   }
-  if (!files.includes("App.tsx") && files.every((f) => !f.startsWith("src/screens/"))) {
+  const hasLegacy = files.includes("App.tsx") || files.some((f) => f.startsWith("src/screens/"));
+  const hasRouter = files.some((f) => /^app\/\(tabs\)\/.+\.tsx$/.test(f));
+  if (!hasLegacy && !hasRouter) {
     return null;
   }
 
   const parts: string[] = [`As of ${new Date().toISOString()} (from the live built app):`];
 
-  const screenFiles = files.filter((f) => /^src\/screens\/.+\.tsx$/.test(f));
+  const screenFiles = files.filter(
+    (f) => /^src\/screens\/.+\.tsx$/.test(f) || /^app\/\(tabs\)\/.+\.tsx$/.test(f),
+  );
   const componentFiles = files.filter(
     (f) => /^src\/components\/.+\.tsx$/.test(f) && !f.endsWith("ScreenWrapper.tsx"),
   );
   parts.push(
-    `Screens in code (${screenFiles.length}): ${screenFiles.map((f) => f.replace("src/screens/", "").replace(".tsx", "")).join(", ") || "none yet"}`,
+    `Screens in code (${screenFiles.length}): ${screenFiles.map((f) => f.replace(/^src\/screens\//, "").replace(/^app\/\(tabs\)\//, "").replace(".tsx", "")).join(", ") || "none yet"}`,
   );
   if (componentFiles.length) {
     parts.push(

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { LayoutAnimation, Platform, Pressable, StyleSheet, Text, UIManager, View } from "react-native";
-import { hapticSelection } from "../lib/haptics.js";
-import { colors, radius, spacing, type as typeScale } from "../theme/tokens.js";
+import { hapticSelection } from "../lib/haptics";
+import { colors, radius, spacing, type as typeScale } from "../theme/tokens";
 
 if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);

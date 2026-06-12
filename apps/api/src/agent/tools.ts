@@ -33,7 +33,7 @@ export const agentTools: ChatTool[] = [
       parameters: {
         type: "object",
         properties: {
-          path: { type: "string", description: "Project-relative path, e.g. App.tsx" },
+          path: { type: "string", description: "Project-relative path, e.g. app/(tabs)/index.tsx" },
         },
         required: ["path"],
       },
@@ -48,7 +48,7 @@ export const agentTools: ChatTool[] = [
       parameters: {
         type: "object",
         properties: {
-          path: { type: "string", description: "Project-relative path, e.g. src/screens/Home.tsx" },
+          path: { type: "string", description: "Project-relative path, e.g. app/(tabs)/index.tsx" },
           content: { type: "string", description: "The complete file content." },
         },
         required: ["path", "content"],
@@ -118,14 +118,18 @@ export async function executeTool(
       return clip(content);
     }
     case "write_file": {
-      const path = String(args.path);
-      const guard = assertAgentWriteAllowed(path, String(args.content));
+      const requestedPath = String(args.path);
+      const guard = assertAgentWriteAllowed(requestedPath, String(args.content));
       if (!guard.ok) return guard.message;
+      const path = guard.path ?? requestedPath;
       await writeProjectFile(projectId, path, guard.content);
       if (path.replace(/\\/g, "/").replace(/^\/+/, "").endsWith("index.ts")) {
         await repairPlatformGlue(projectId);
       }
       emit(projectId, { type: "file.op", op: "write", path });
+      if (path !== requestedPath.replace(/\\/g, "/").replace(/^\/+/, "")) {
+        return `Wrote ${path} (routed from ${requestedPath} — secondary screens belong in app/(stack)/, not the tab bar)`;
+      }
       return `Wrote ${path}`;
     }
     case "delete_file": {

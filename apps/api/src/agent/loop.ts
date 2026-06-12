@@ -30,7 +30,11 @@ import {
 } from "./prompts.js";
 import { scheduleBrainstormSnapshotRefresh } from "../brainstormSnapshot.js";
 import { runDesignPolishPass } from "./designPolish.js";
-import { runTapEditHygienePass } from "./tapEditHygiene.js";
+import {
+  runTapEditHygienePass,
+  tapEditAuditBlocked,
+  tapEditHygieneFailed,
+} from "./tapEditHygiene.js";
 import { tryTapEditPatch } from "./tapEdit.js";
 import { agentTools, executeTool } from "./tools.js";
 
@@ -113,7 +117,7 @@ async function runHygienePass(
   spec: AppSpec,
   state: { cancelled: boolean },
   phase: "build" | "edit",
-): Promise<string | null> {
+): Promise<{ issuesBefore: number; issuesAfter: number; verifyError: string | null } | null> {
   const result = await runTapEditHygienePass({
     projectId,
     spec,
@@ -125,7 +129,7 @@ async function runHygienePass(
     status: (s, message) =>
       status(projectId, s === "checking" ? "checking" : "fixing", message),
   });
-  return result.verifyError;
+  return result;
 }
 
 /**
@@ -246,7 +250,41 @@ export async function runBuild(projectId: string): Promise<void> {
       await logBuild(projectId, "warn", "system", `Design polish verify: ${polishError}`);
     }
 
-    await runHygienePass(projectId, spec, state, "build");
+    const hygieneResult = await runHygienePass(projectId, spec, state, "build");
+    if (hygieneResult && tapEditAuditBlocked(hygieneResult)) {
+      throw new Error(
+        `Tap-to-edit hygiene gate failed: ${hygieneResult.issuesAfter} label(s) would not save when tapped — see build log for details.`,
+      );
+    }
+    if (hygieneResult?.verifyError) {
+      await logBuild(
+        projectId,
+        "warn",
+        "system",
+        `Post-hygiene preview verify failed — one heal round:\n${hygieneResult.verifyError}`,
+      );
+      status(projectId, "fixing", "Fixing a preview issue...");
+      const healMessages: ChatMessage[] = [
+        { role: "system", content: healSystemPrompt(spec) },
+        {
+          role: "user",
+          content: `Tap-to-edit hygiene left the app in a state that fails the preview smoke test. Fix it so the app loads in the web preview.\n\n${hygieneResult.verifyError}`,
+        },
+      ];
+      const healChoice = pickAgentModel("build", MAX_HEAL_ROUNDS + 2);
+      await agentLoop(projectId, healChoice, healMessages, HEAL_ITERATIONS, state, "FIX COMPLETE");
+      const retryError = await verifyApp(projectId);
+      if (retryError) {
+        await logBuild(
+          projectId,
+          "warn",
+          "system",
+          `Preview still failing after post-hygiene heal (build continues):\n${retryError}`,
+        );
+      } else {
+        await logBuild(projectId, "info", "system", "Preview recovered after post-hygiene heal.");
+      }
+    }
 
     status(projectId, "checking", "Saving your progress...");
     await createCheckpoint(projectId, "build").catch((err) =>
@@ -417,13 +455,15 @@ export async function runEdit(
       return;
     }
 
-    const hygieneError = await runHygienePass(projectId, spec, state, "edit");
-    if (hygieneError) {
+    const hygieneResult = await runHygienePass(projectId, spec, state, "edit");
+    if (hygieneResult && tapEditHygieneFailed(hygieneResult)) {
       await resetToGitRef(projectId, safeRef);
       await sendEditReply(
         projectId,
         conversation.id,
-        "I couldn't make that change without breaking your app, so I left everything as it was. Try describing it a bit differently.",
+        hygieneResult.issuesAfter > 0
+          ? "I couldn't save that in a way that keeps every label tappable, so I left your app as it was. Try describing the change in the chat below."
+          : "I couldn't make that change without breaking your app, so I left everything as it was. Try describing it a bit differently.",
         choice.model,
       );
       status(projectId, "idle", "Change rolled back - your app is untouched.");

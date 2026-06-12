@@ -1,6 +1,5 @@
-# Appable golden Expo template image.
-# Contains a ready-to-run Expo (React Native) starter app with node_modules
-# baked in, so project containers cold-start in seconds, not minutes.
+# Appable golden Expo template image (v2 — Expo Router).
+# Build as appable/expo-template:v2-native — never overwrite :v1.
 
 FROM node:22-bookworm-slim
 
@@ -12,27 +11,28 @@ ENV EXPO_NO_TELEMETRY=1 \
     NPM_CONFIG_FUND=false \
     NPM_CONFIG_AUDIT=false
 
-# Pin SDK 54 — matches Expo Go on the App Store / Play Store.
-# create-expo-app@latest currently scaffolds SDK 56, which store Expo Go cannot open.
 WORKDIR /template
 RUN npx --yes create-expo-app@latest . --template blank-typescript@sdk-54 --no-install -y \
     && npm install \
     && npx expo install react-dom react-native-web @expo/metro-runtime \
         @react-native-async-storage/async-storage @expo/vector-icons expo-font \
         expo-haptics expo-blur expo-symbols expo-status-bar \
-        @react-native-community/datetimepicker
+        @react-native-community/datetimepicker \
+        expo-router react-native-screens react-native-safe-area-context \
+        expo-linking expo-constants
 
-# Appable scaffold: design tokens + auth helpers (non-negotiables)
 COPY template-files/ .
 
-# Git identity for checkpoint commits made inside containers
+# v2: Expo Router entry, no legacy App.tsx
+RUN rm -f App.tsx index.ts \
+    && node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));p.main='expo-router/entry';fs.writeFileSync('package.json',JSON.stringify(p,null,2));"
+
 RUN git config --global user.email "agent@appable.dev" \
     && git config --global user.name "Appable Agent" \
     && git config --global init.defaultBranch main \
     && git config --global --add safe.directory /app
 
 COPY start.sh /usr/local/bin/appable-start
-# Normalize line endings in case the build context comes from Windows
 RUN sed -i 's/\r$//' /usr/local/bin/appable-start \
     && chmod +x /usr/local/bin/appable-start
 

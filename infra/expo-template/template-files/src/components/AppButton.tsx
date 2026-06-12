@@ -1,6 +1,6 @@
 import { Pressable, StyleSheet, Text, type TextProps } from "react-native";
-import { hapticLight } from "../lib/haptics.js";
-import { colors, layout, radius, spacing, type as typeScale } from "../theme/tokens.js";
+import { hapticLight } from "../lib/haptics";
+import { colors, layout, radius, spacing, type as typeScale } from "../theme/tokens";
 
 type Props = {
   label: string;
