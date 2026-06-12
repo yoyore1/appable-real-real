@@ -19,7 +19,8 @@ RUN npx --yes create-expo-app@latest . --template blank-typescript@sdk-54 --no-i
     && npm install \
     && npx expo install react-dom react-native-web @expo/metro-runtime \
         @react-native-async-storage/async-storage @expo/vector-icons expo-font \
-        @expo-google-fonts/dm-sans @expo-google-fonts/fraunces
+        expo-haptics expo-blur expo-symbols expo-status-bar \
+        @react-native-community/datetimepicker
 
 # Appable scaffold: design tokens + auth helpers (non-negotiables)
 COPY template-files/ .

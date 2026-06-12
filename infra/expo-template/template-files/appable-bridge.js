@@ -1,4 +1,4 @@
-/* Appable edit bridge - auto-generated, do not edit. v10 */
+/* Appable edit bridge - auto-generated, do not edit. v13 */
 /* eslint-disable */
 if (
   typeof document !== "undefined" &&
@@ -100,7 +100,7 @@ if (
 
   function shortLabel(text) {
     if (!text) return "";
-    var line = String(text).replace(/[\\r\\n]+/g, " ").replace(/\\s+/g, " ").trim();
+    var line = String(text).replace(/[\r\n]+/g, " ").replace(/\s+/g, " ").trim();
     return line.length > MAX_TEXT_LABEL ? line.slice(0, MAX_TEXT_LABEL) : line;
   }
 
@@ -150,7 +150,7 @@ if (
     } catch (_e) {}
     var text = (el.innerText || el.textContent || "").trim();
     if (!text) return r.width < 64 && r.height < 64;
-    if (text.length <= 2 && /[\\p{Extended_Pictographic}\\p{So}]/u.test(text)) return true;
+    if (text.length <= 2 && /[\p{Extended_Pictographic}\p{So}]/u.test(text)) return true;
     if (text.length === 1 && !/[a-zA-Z0-9]/.test(text)) return true;
     return false;
   }
@@ -334,8 +334,6 @@ if (
         bestResolved = resolved;
       }
     }
-    if (!bestResolved && bgEl) bestResolved = resolveTextTarget(bgEl, x, y);
-    if (!bestResolved && clickEl) bestResolved = resolveTextTarget(clickEl, x, y);
     if (!bgEl && bestResolved) bgEl = pickCardContainer(bestResolved.el, x, y);
     if (!bgEl && clickEl) bgEl = pickCardContainer(clickEl, x, y);
     if (!bgEl) return null;
@@ -356,35 +354,27 @@ if (
       styleEl = hitIcon;
       bestResolved = { el: hitIcon, text: iconDisplayText(hitIcon) };
       parts = [{ text: iconDisplayText(hitIcon), el: hitIcon, isIcon: true }];
-    } else {
+    } else if (bestResolved) {
       var allParts = collectEditableParts(bgEl);
-      if (bestResolved) {
-        var hit = partForElement(allParts, bestResolved.el);
-        if (hit) {
-          parts = [hit];
-          styleEl = hit.el;
-          bestResolved = { el: hit.el, text: hit.text };
-        } else {
-          parts = [
-            {
-              text: bestResolved.text,
-              el: bestResolved.el,
-              isIcon: isIconLike(bestResolved.el),
-            },
-          ];
-          styleEl = bestResolved.el;
-        }
-      } else if (allParts.length === 1) {
-        parts = allParts;
-        styleEl = allParts[0].el;
-        bestResolved = { el: allParts[0].el, text: allParts[0].text };
-      } else if (allParts.length > 1) {
-        parts = allParts;
-      } else if (boxLabel) {
-        parts = [{ text: boxLabel, el: styleEl, isIcon: false }];
+      var hit = partForElement(allParts, bestResolved.el);
+      if (hit) {
+        parts = [hit];
+        styleEl = hit.el;
+        bestResolved = { el: hit.el, text: hit.text };
       } else {
-        parts = [{ text: "", el: styleEl, isIcon: false }];
+        parts = [
+          {
+            text: bestResolved.text,
+            el: bestResolved.el,
+            isIcon: isIconLike(bestResolved.el),
+          },
+        ];
+        styleEl = bestResolved.el;
       }
+    } else {
+      // Empty padding / screen background — color only, not every label inside.
+      parts = [];
+      styleEl = bgEl;
     }
 
     var textTestId = findNearestTestId(styleEl);
@@ -413,6 +403,7 @@ if (
       textTestId: pick.textTestId,
       boxTestId: pick.boxTestId,
       anchorLabel: pick.anchorLabel || shortLabel(pick.parts[0] && pick.parts[0].text),
+      backgroundOnly: pick.parts.length === 0,
       text: pick.parts.length === 1 ? pick.parts[0].text : "",
       textParts: pick.parts.map(function (p) {
         return { text: p.text, isIcon: Boolean(p.isIcon) };

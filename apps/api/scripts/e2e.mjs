@@ -17,6 +17,7 @@ const ANSWERS = [
   "It should save each habit with its name and which days I completed it, and show my current streak per habit.",
   "Dark theme, energetic vibe, orange as the main color.",
   "Nothing else, keep it simple. No social features.",
+  "Yes, that's everything — please finalize the app plan.",
 ];
 
 async function api(path, opts = {}, token) {
@@ -115,6 +116,17 @@ async function main() {
     await new Promise((r) => setTimeout(r, 500));
   }
 
+  if (specVersion === 0) {
+    log("spec marker missing; calling /spec/ensure...");
+    const ensure = await api(`/projects/${project.id}/spec/ensure`, { method: "POST", body: {} }, token);
+    if (!ensure.ready || !ensure.spec) {
+      log("waiting for spec extraction...");
+      await waitFor(state, (e) => e.type === "spec.updated", 180_000, "spec.updated");
+    } else {
+      specVersion = 1;
+      log(`  spec ensured: ${ensure.spec.name} (${ensure.spec.screens?.length ?? 0} screens)`);
+    }
+  }
   if (specVersion === 0) {
     log("waiting for spec extraction...");
     await waitFor(state, (e) => e.type === "spec.updated", 180_000, "spec.updated");

@@ -10,6 +10,8 @@ export interface TapEditChange {
   oldValue?: string;
   /** Label inside the card whose background should change (e.g. "Tue"). */
   anchorText?: string;
+  /** Whole screen / page background (ScrollView root style). */
+  screen?: boolean;
 }
 
 export interface TapEditRequest {
@@ -82,9 +84,21 @@ export function parseTapEditRequest(request: string): TapEditRequest | null {
       });
       continue;
     }
+    const bgByTestId = part.match(
+      /^set the background color of the element with testID "([^"]+)" to (#[0-9A-Fa-f]{3,8})$/u,
+    );
+    if (bgByTestId) {
+      changes.push({ type: "background", value: bgByTestId[2] });
+      continue;
+    }
     const bg = part.match(/^set the background color to (#[0-9A-Fa-f]{3,8})$/);
     if (bg) {
       changes.push({ type: "background", value: bg[1] });
+      continue;
+    }
+    const screenBg = part.match(/^set the screen background color to (#[0-9A-Fa-f]{3,8})$/);
+    if (screenBg) {
+      changes.push({ type: "background", value: screenBg[1], screen: true });
       continue;
     }
     const fwScoped = part.match(/^set the font weight of "(.+)" to (bold|normal)$/u);
@@ -148,17 +162,36 @@ export async function tryTapEditPatch(
   );
   if (!hasWork) return { ok: false };
 
+  const onlyBackground = parsed.changes.every((c) => c.type === "background");
   const hasAnchor = parsed.changes.some((c) => c.anchorText);
   const hasTextReplace = parsed.changes.some((c) => c.type === "text" && c.oldValue);
   const hasIconRemoval = parsed.changes.some((c) => c.type === "removeIcon");
   const effectiveTestId =
     parsed.testId && !isBroadContainerTestId(parsed.testId) ? parsed.testId : "";
-  if (!effectiveTestId && !hasAnchor && !hasTextReplace && !hasIconRemoval) {
+  if (!effectiveTestId && !hasAnchor && !hasTextReplace && !hasIconRemoval && !onlyBackground) {
+    return { ok: false };
+  }
+
+  const screenBgChange = parsed.changes.find((c) => c.type === "background" && c.screen);
+  if (screenBgChange) {
+    const screenResult = await tryPatchScreenBackground(
+      projectId,
+      screenBgChange.value,
+      parsed.changes,
+    );
+    if (screenResult) return screenResult;
+    emit(projectId, {
+      type: "build.event",
+      level: "warn",
+      source: "system",
+      text: `tap-edit: could not patch screen background for ${request.slice(0, 100)}`,
+      timestamp: new Date().toISOString(),
+    });
     return { ok: false };
   }
 
   let candidates = await findCandidateFiles(projectId, parsed.testId, parsed.changes);
-  if (candidates.length === 0 && hasTextReplace) {
+  if (candidates.length === 0 && (hasTextReplace || onlyBackground)) {
     candidates = await allEditableSourceFiles(projectId);
   }
 
@@ -196,6 +229,38 @@ export async function tryTapEditPatch(
     timestamp: new Date().toISOString(),
   });
   return { ok: false };
+}
+
+/** Page background lives in theme tokens + App shell — not random screen ScrollViews. */
+async function tryPatchScreenBackground(
+  projectId: string,
+  color: string,
+  changes: TapEditChange[],
+): Promise<{ ok: true; summary: string; file: string } | null> {
+  const priority = ["src/theme/tokens.ts", "App.tsx"];
+  for (const file of priority) {
+    const content = await readProjectFile(projectId, file).catch(() => null);
+    if (content === null) continue;
+    const updated = file.endsWith("tokens.ts")
+      ? patchThemeBackgroundToken(content, color)
+      : patchAppShellBackground(content, color);
+    if (updated && updated !== content && looksLikeValidSource(updated)) {
+      await writeProjectFile(projectId, file, updated);
+      emit(projectId, { type: "file.op", op: "write", path: file });
+      return { ok: true, summary: tapEditSummary(changes), file };
+    }
+  }
+
+  for (const file of await allEditableSourceFiles(projectId)) {
+    const content = await readProjectFile(projectId, file);
+    const updated = patchMainScrollBackground(content, color);
+    if (updated && updated !== content && looksLikeValidSource(updated)) {
+      await writeProjectFile(projectId, file, updated);
+      emit(projectId, { type: "file.op", op: "write", path: file });
+      return { ok: true, summary: tapEditSummary(changes), file };
+    }
+  }
+  return null;
 }
 
 /** Reject patches that would obviously break TSX before we write them. */
@@ -368,6 +433,46 @@ const DATA_FIELD_BY_TEST_ID_PREFIX: Record<string, string> = {
   tab: "label",
 };
 
+function patchConstStringValue(
+  content: string,
+  ident: string,
+  oldText: string,
+  newText: string,
+): string | null {
+  const escapedIdent = ident.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const needles = [oldText, stripEmoji(oldText)].filter(
+    (v, i, arr) => Boolean(v) && arr.indexOf(v) === i,
+  );
+  for (const old of needles) {
+    const escapedOld = old.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const re = new RegExp(
+      `((?:export\\s+)?(?:const|let)\\s+${escapedIdent}\\s*=\\s*)(['"])${escapedOld}\\2`,
+    );
+    if (re.test(content)) {
+      return content.replace(re, `$1$2${newText}$2`);
+    }
+  }
+  return null;
+}
+
+/** <Text testID="...">{APP_NAME}</Text> — patch the const/let string, not the JSX child. */
+function patchIdentifierRefText(
+  content: string,
+  testId: string,
+  oldText: string,
+  newText: string,
+): string | null {
+  const el =
+    findOpeningTagAtTestId(content, testId) ?? findTemplateTestIdElement(content, testId);
+  if (!el || !/<Text\b/.test(el.tag)) return null;
+  const bounds = readTextElementBounds(content, el);
+  if (!bounds) return null;
+  const trimmed = bounds.inner.trim();
+  const m = trimmed.match(/^\{([A-Za-z_$][\w$]*)\}$/);
+  if (!m) return null;
+  return patchConstStringValue(content, m[1], oldText, newText);
+}
+
 function patchKeyedDataField(
   content: string,
   testId: string,
@@ -454,9 +559,25 @@ function patchTapEditInFile(
 
     if (change.type === "background") {
       let patchedBg: string | null = null;
-      if (testId) patchedBg = patchBackgroundByTestId(content, testId, change.value);
-      if (!patchedBg && change.anchorText) {
-        patchedBg = patchBackgroundNearText(content, change.anchorText, change.value, null);
+      if (change.screen) {
+        patchedBg = patchPageBackgroundInFile(content, change.value);
+      } else {
+        if (testId) patchedBg = patchBackgroundByTestId(content, testId, change.value);
+        if (!patchedBg && change.anchorText) {
+          patchedBg = patchBackgroundNearText(content, change.anchorText, change.value, null);
+        }
+        if (!patchedBg && testId) {
+          const el = findOpeningTagAtTestId(content, testId);
+          if (el && /<Text\b/.test(el.tag)) {
+            patchedBg = patchPageBackgroundInFile(content, change.value);
+          }
+        }
+        if (!patchedBg && change.anchorText && !testId) {
+          patchedBg = patchPageBackgroundInFile(content, change.value);
+        }
+        if (!patchedBg && !testId && !change.anchorText) {
+          patchedBg = patchPageBackgroundInFile(content, change.value);
+        }
       }
       if (patchedBg) {
         content = patchedBg;
@@ -1297,6 +1418,68 @@ function stripStylePropFromObject(objExpr: string, prop: StyleProp): string {
   return `{ ${cleaned} }`;
 }
 
+function patchStyleSheetRuleProp(
+  content: string,
+  ruleName: string,
+  prop: StyleProp,
+  value: string,
+): string | null {
+  const ruleRe = new RegExp(`(${ruleName}:\\s*\\{)([\\s\\S]*?)(\\})`);
+  const m = content.match(ruleRe);
+  if (!m) return null;
+  const body = m[2];
+  const propRe = new RegExp(`${prop}\\s*:\\s*[^,\\n}]+`);
+  const newBody = propRe.test(body)
+    ? body.replace(propRe, `${prop}: '${value}'`)
+    : `${body.trim()}${body.trim() ? ", " : ""}${prop}: '${value}'`;
+  return content.replace(ruleRe, `${m[1]}${newBody}${m[3]}`);
+}
+
+/** Global cream/page color — `colors.background` in tokens.ts. */
+function patchThemeBackgroundToken(content: string, color: string): string | null {
+  if (!/\bexport const colors\b/.test(content)) return null;
+  const re = /^(\s*background:\s*["'])#[0-9A-Fa-f]{3,8}(["'],?\s*)$/m;
+  if (!re.test(content)) return null;
+  return content.replace(re, `$1${color}$2`);
+}
+
+/** Root app shell — App.tsx outer View background. */
+function patchAppShellBackground(content: string, color: string): string | null {
+  if (!/export default function App\b/.test(content)) return null;
+  return patchStyleSheetRuleProp(content, "container", "backgroundColor", color);
+}
+
+function patchPageBackgroundInFile(content: string, color: string): string | null {
+  return (
+    patchThemeBackgroundToken(content, color) ??
+    patchAppShellBackground(content, color) ??
+    patchMainScrollBackground(content, color)
+  );
+}
+
+/** Patch screen-level background via the main ScrollView / Screen style rule. */
+function patchMainScrollBackground(content: string, color: string): string | null {
+  const roots = [
+    /<ScrollView\b[^>]*\bstyle=\{styles\.(\w+)\}/,
+    /<Screen\b[^>]*\bstyle=\{styles\.(\w+)\}/,
+    /<SafeAreaView\b[^>]*\bstyle=\{styles\.(\w+)\}/,
+  ];
+  for (const re of roots) {
+    const m = content.match(re);
+    if (!m?.[1]) continue;
+    const sheetPatched = patchStyleSheetRuleProp(content, m[1], "backgroundColor", color);
+    if (sheetPatched) return sheetPatched;
+  }
+
+  const scrollIdx = content.search(/<(ScrollView|Screen|SafeAreaView)\b/);
+  if (scrollIdx === -1) return null;
+  const scrollTag = parseOpeningTagAt(content, scrollIdx);
+  if (!scrollTag) return null;
+  const inline = patchStyleOnTag(scrollTag.tag, "backgroundColor", color);
+  if (!inline) return null;
+  return replaceTagAt(content, scrollTag, inline);
+}
+
 function patchBackgroundNearText(
   content: string,
   anchorText: string,
@@ -1487,6 +1670,9 @@ function patchTextReplaceWithTestId(
 
     const byId = patchTextElementByTestId(content, testId, newText, oldText);
     if (byId) return byId;
+
+    const constRef = patchIdentifierRefText(content, testId, oldText, newText);
+    if (constRef) return constRef;
 
     const el = findOpeningTagAtTestId(content, testId);
     if (el) {
@@ -2187,7 +2373,7 @@ function tapEditSummary(changes: TapEditChange[]): string {
         c.value === "System" ? "the font is back to default" : `the font is now ${c.value}`,
       );
     } else if (c.type === "background") {
-      parts.push("the background color is updated");
+      parts.push(c.screen ? "the screen background color is updated" : "the background color is updated");
     } else if (c.type === "removeIcon") {
       parts.push("the icon is removed");
     }

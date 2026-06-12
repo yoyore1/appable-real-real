@@ -1,6 +1,5 @@
 /**
- * Copy Appable scaffold (theme tokens + auth) into an existing project container
- * and install design dependencies if missing.
+ * Copy Appable iOS scaffold into an existing project container.
  *
  * Usage: node apps/api/scripts/seed-appable-scaffold.mjs <projectId>
  */
@@ -40,24 +39,36 @@ try {
   process.exit(1);
 }
 
-for (const rel of [
+const scaffoldFiles = [
   "src/theme/tokens.ts",
   "src/lib/auth.ts",
   "src/lib/storage.ts",
+  "src/lib/haptics.ts",
   "src/components/index.ts",
   "src/components/Screen.tsx",
   "src/components/Card.tsx",
   "src/components/AppButton.tsx",
   "src/components/Row.tsx",
   "src/components/EmptyState.tsx",
-]) {
+  "src/components/GroupedSection.tsx",
+  "src/components/SettingsRow.tsx",
+  "src/components/SegmentedControl.tsx",
+  "src/components/SearchField.tsx",
+  "src/components/Sheet.tsx",
+  "src/components/AppAlert.tsx",
+  "src/components/ActionMenu.tsx",
+  "src/components/Blur.tsx",
+  "src/components/AppIcon.tsx",
+];
+
+for (const rel of scaffoldFiles) {
   const content = readFileSync(join(templateDir, rel), "utf8");
   writeFileInContainer(rel, content);
   console.log(`Wrote ${rel}`);
 }
 
 sh(
-  `docker exec ${container} sh -c "cd /app && npx expo install @expo/vector-icons expo-font @expo-google-fonts/dm-sans @expo-google-fonts/fraunces"`,
+  `docker exec ${container} sh -c "cd /app && npx expo install @expo/vector-icons expo-font expo-haptics expo-blur expo-symbols expo-status-bar @react-native-community/datetimepicker"`,
 );
 sh(`docker exec ${container} touch /app/index.ts`);
-console.log("\nScaffold seeded. Rebuild the app or ask Build chat to wire auth + design.");
+console.log("\niOS scaffold seeded. Rebuild the app or ask Build chat to wire auth + screens.");

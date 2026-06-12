@@ -107,6 +107,7 @@ function friendlyTapEditChange(change: string): string {
     /^set the background color of the container for "(.+)" to (#[0-9A-Fa-f]{3,8})$/u,
   );
   if (bgScoped) return `Change the ${bgScoped[1]} card background`;
+  if (change.startsWith("set the screen background color to ")) return "Change the screen background color";
   if (change.startsWith("set the background color to ")) return "Change the background color";
   const fwScoped = change.match(/^set the font weight of "(.+)" to (bold|normal)$/u);
   if (fwScoped) {

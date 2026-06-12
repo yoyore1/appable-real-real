@@ -211,7 +211,11 @@ export async function ensureRunning(projectId: string): Promise<PreviewInfo> {
       } else if (inspect.State.Running && project.metroPort) {
         await touch(projectId);
         await repairPlatformGlue(projectId);
-        return previewUrls(project.metroPort);
+        const urls = previewUrls(project.metroPort);
+        if (await isMetroLive(project.metroPort)) {
+          emit(projectId, { type: "preview.status", status: "ready", ...urlsToEvent(urls) });
+        }
+        return urls;
       } else if (!inspect.State.Running) {
         // Reuse the existing container (volume + port config preserved).
         emit(projectId, { type: "preview.status", status: "starting" });
@@ -231,7 +235,12 @@ export async function ensureRunning(projectId: string): Promise<PreviewInfo> {
           await waitForMetro(projectId, port);
           await db.project.update({
             where: { id: projectId },
-            data: { status: "running", lastActiveAt: new Date(), metroPort: port, webPort: port },
+            data: {
+              status: project.status === "building" ? "building" : "running",
+              lastActiveAt: new Date(),
+              metroPort: port,
+              webPort: port,
+            },
           });
           const urls = previewUrls(port);
           emit(projectId, { type: "preview.status", status: "ready", ...urlsToEvent(urls) });
@@ -279,7 +288,7 @@ export async function ensureRunning(projectId: string): Promise<PreviewInfo> {
       await db2.project.update({
         where: { id: projectId },
         data: {
-          status: "running",
+          status: project.status === "building" ? "building" : "running",
           containerId: container.id,
           metroPort: port,
           webPort: port,
@@ -618,7 +627,29 @@ export async function verifyApp(projectId: string): Promise<string | null> {
 // Checkpoints (git inside the project volume)
 // ---------------------------------------------------------------------------
 
+/** Golden template init can leave a repo with no commits — edits need HEAD for rollback. */
+export async function ensureGitReady(projectId: string): Promise<void> {
+  const rev = await execInProject(projectId, ["git", "rev-parse", "HEAD"]);
+  if (rev.exitCode === 0 && rev.stdout.trim()) return;
+
+  await execInProject(projectId, ["git", "add", "-A"]);
+  const commit = await execInProject(projectId, [
+    "git",
+    "commit",
+    "-m",
+    "checkpoint: initial",
+    "--allow-empty",
+  ]);
+  if (commit.exitCode !== 0) {
+    const retry = await execInProject(projectId, ["git", "rev-parse", "HEAD"]);
+    if (retry.exitCode !== 0) {
+      throw new Error(`git init commit failed: ${commit.stderr || commit.stdout}`);
+    }
+  }
+}
+
 export async function createCheckpoint(projectId: string, label: string): Promise<string | null> {
+  await ensureGitReady(projectId);
   const status = await execInProject(projectId, ["git", "status", "--porcelain"]);
   if (!status.stdout.trim()) return null; // nothing changed
 
@@ -641,6 +672,7 @@ export async function createCheckpoint(projectId: string, label: string): Promis
 
 /** Current HEAD commit of the project repo (for edit rollbacks). */
 export async function getHeadRef(projectId: string): Promise<string> {
+  await ensureGitReady(projectId);
   const rev = await execInProject(projectId, ["git", "rev-parse", "HEAD"]);
   if (rev.exitCode !== 0) throw new Error(`git rev-parse failed: ${rev.stderr}`);
   return rev.stdout.trim();

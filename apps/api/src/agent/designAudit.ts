@@ -16,7 +16,16 @@ export type DesignAuditIssueKind =
   | "hardcoded-jsx-string"
   | "any-type"
   | "features-folder"
-  | "card-pressable-no-testid";
+  | "card-pressable-no-testid"
+  | "too-many-tabs"
+  | "sparse-seed-data"
+  | "hardcoded-progress-width"
+  | "material-ripple"
+  | "material-elevation"
+  | "material-fab"
+  | "material-icon"
+  | "all-caps-button"
+  | "platform-color-web-unsafe";
 
 export interface DesignAuditIssue {
   kind: DesignAuditIssueKind;
@@ -118,6 +127,49 @@ export async function auditDesignQuality(
           snippet: line.trim().slice(0, 120),
         });
       }
+      if (/TouchableNativeFeedback/.test(line)) {
+        issues.push({
+          kind: "material-ripple",
+          file,
+          line: i + 1,
+          snippet: line.trim().slice(0, 120),
+        });
+      }
+      if (/\belevation:\s*\d+/.test(line)) {
+        issues.push({
+          kind: "material-elevation",
+          file,
+          line: i + 1,
+          snippet: line.trim().slice(0, 120),
+        });
+      }
+      if (/floatingActionButton|FAB\b|fab\s*:/i.test(line)) {
+        issues.push({
+          kind: "material-fab",
+          file,
+          line: i + 1,
+          snippet: line.trim().slice(0, 120),
+        });
+      }
+      if (/MaterialIcons|MaterialCommunityIcons|@material-icons/.test(line)) {
+        issues.push({
+          kind: "material-icon",
+          file,
+          line: i + 1,
+          snippet: line.trim().slice(0, 120),
+        });
+      }
+      if (
+        /<AppButton[^>]*label=["'][A-Z\s]{4,}["']/i.test(line) ||
+        (/label:\s*["'][A-Z\s]{4,}["']/.test(line) && /AppButton|button/i.test(line))
+      ) {
+        issues.push({
+          kind: "all-caps-button",
+          file,
+          line: i + 1,
+          snippet: line.trim().slice(0, 120),
+        });
+      }
       if (
         /<Pressable\b[^>]*style=[^>]*background/i.test(line) &&
         !/testID=/.test(line)
@@ -181,10 +233,7 @@ export async function auditDesignQuality(
   }
 
   if (!/useFonts|Font\.loadAsync|loadAsync\(/.test(allSource)) {
-    issues.push({
-      kind: "missing-font-load",
-      snippet: "No expo-font loading detected — load DM Sans / display font in App.tsx.",
-    });
+    // System font default — optional expo-font for hero display only
   }
 
   const low = allSource.toLowerCase();
@@ -212,6 +261,85 @@ export async function auditDesignQuality(
         snippet: `Two-sided app needs role picker for: ${roles.join(", ")}`,
       });
     }
+  }
+
+  // Slop prevention Cause 2: tab count budget
+  const tabScreenCount = (allSource.match(/\bTab\.Screen\b/g) ?? []).length;
+  const tabsArrayMatch = allSource.match(/\btabs\s*=\s*\[([\s\S]*?)\]/);
+  let tabCount = tabScreenCount;
+  if (tabsArrayMatch?.[1]) {
+    tabCount = Math.max(tabCount, (tabsArrayMatch[1].match(/\{/g) ?? []).length);
+  }
+  if (tabCount > 5) {
+    issues.push({
+      kind: "too-many-tabs",
+      snippet: `Bottom tab count ~${tabCount} — max 5 (prefer 4). Move Settings off the bar.`,
+    });
+  }
+
+  // Slop prevention Cause 2: seed data density
+  const storagePath = normalized.find((f) => f === "src/lib/storage.ts");
+  if (storagePath) {
+    try {
+      const storageContent = await readProjectFile(projectId, storagePath);
+      const arrayBlocks = storageContent.match(/\[[\s\S]*?\]/g) ?? [];
+      const seedCounts = arrayBlocks
+        .map((block) => (block.match(/\{/g) ?? []).length)
+        .filter((n) => n >= 2);
+      const maxSeed = seedCounts.length ? Math.max(...seedCounts) : 0;
+      if (maxSeed > 0 && maxSeed < 8) {
+        issues.push({
+          kind: "sparse-seed-data",
+          file: storagePath,
+          snippet: `Seed array has ~${maxSeed} records — need 8–15 varied items for lived-in demo.`,
+        });
+      }
+    } catch {
+      /* ignore read errors */
+    }
+  }
+
+  // Slop prevention Cause 3: hardcoded progress widths
+  for (const file of appCode) {
+    let content: string;
+    try {
+      content = await readProjectFile(projectId, file);
+    } catch {
+      continue;
+    }
+    const lines = content.split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]!;
+      if (
+        /width:\s*['"]?\d+%['"]?/.test(line) &&
+        /progress|bar|fill|meter/i.test(content.slice(Math.max(0, content.indexOf(line) - 200), content.indexOf(line) + 200))
+      ) {
+        issues.push({
+          kind: "hardcoded-progress-width",
+          file,
+          line: i + 1,
+          snippet: line.trim().slice(0, 120),
+        });
+      }
+    }
+  }
+
+  // Web preview runs platform=web — PlatformColor() crashes unless guarded by Platform.OS === "ios"
+  for (const file of appCode) {
+    let content: string;
+    try {
+      content = await readProjectFile(projectId, file);
+    } catch {
+      continue;
+    }
+    if (!/PlatformColor\s*\(/.test(content)) continue;
+    if (/Platform\.OS\s*===\s*["']ios["']/.test(content)) continue;
+    issues.push({
+      kind: "platform-color-web-unsafe",
+      file,
+      snippet:
+        "PlatformColor() used without Platform.OS === 'ios' guard — breaks in-browser phone preview.",
+    });
   }
 
   return issues;

@@ -1,8 +1,11 @@
 import type { AppSpec } from "@appable/shared";
+import { iosFeelPrompt } from "./iosFeel.js";
+import { slopPreventionPrompt } from "./slopPrevention.js";
 
 /**
  * Code discipline v2 — frontier-model method on Appable's live stack.
  * Tamagui/Zustand/Expo Router/FlashList are v2 platform targets, NOT used now.
+ * Slop prevention (apps/api/docs/slop-prevention.md) is merged into build prompts.
  */
 
 export const BUILD_SEQUENCE = `## RULE 0 — THE SEQUENCE (never skip, never reorder)
@@ -26,13 +29,16 @@ Before any screen:
 - TypeScript strict. No \`any\`. No untyped props.`;
 
 export const PRIMITIVES_RULES = `## RULE 2 — PRIMITIVES BEFORE SCREENS
-Before screens, create or extend base components in src/components/ using StyleSheet + tokens.ts:
-- Screen, Card, AppButton, Row, EmptyState (extend scaffold if present).
-- Token values from src/theme/tokens.ts only — never improvised colors/spacing/radii.
-- Load fonts via expo-font + @expo-google-fonts/dm-sans / fraunces (already in template).
-- ONLY use dependencies already in the golden template. Do NOT npm install new packages.
+Before screens, use iOS template components in src/components/ + tokens.ts:
+- Screen, Card, AppButton, Row, EmptyState, GroupedSection, SettingsRow,
+  SegmentedControl, SearchField, Sheet, AppAlert, ActionMenu, AppIcon, Blur.
+- System font for ALL functional UI (rows, labels, buttons, tabs). Display font
+  only on hero headings if spec.vibe calls for it — never on tab labels or rows.
+- Call applyBrandPrimary(spec.vibe.primaryColor) in tokens.ts on first build.
+- Token values from src/theme/tokens.ts only — PlatformColor semantics on iOS.
+- ONLY use dependencies already in the golden template. Do NOT npm install.
 - Every primitive MUST accept label + testID props and pass testID to inner Text.
-  Never hide editable labels inside opaque wrappers.`;
+  SettingsRow: testID on row, label, value, chevron. Never hide labels in wrappers.`;
 
 export const FILE_LAYOUT_RULES = `## RULE 3 — FILE LAYOUT
 - Code ONLY in: App.tsx, src/screens/, src/components/, src/lib/, src/theme/.
@@ -78,6 +84,12 @@ Re-read every screen and fix before finishing:
 - [ ] Placeholder or generic sample data?
 - [ ] New dependency outside golden template?
 - [ ] Emoji used as icons?
+- [ ] One dominant CTA per screen; primary color ≤ ~30% of elements?
+- [ ] Tab bar ≤ 5 tabs; labels don't clip at ~375px width?
+- [ ] Progress/chart visuals match underlying data (no hardcoded bar widths)?
+- [ ] Label+value rows survive 20-char names (label flex:1 + ellipsize)?
+- [ ] Lists work at 0 items (empty state) and many items (scroll)?
+- [ ] iOS feel: no Material tells, 17pt body, grouped lists, AppAlert/ActionMenu wrappers?
 
 FINAL BAR: boring consistent codebase + normie believes it's App Store ready +
 every visible label/card is tappable and patchable.`;
@@ -88,6 +100,8 @@ See rule 7b in hard rules for full contract.`;
 
 export function codeDisciplinePrompt(spec: AppSpec): string {
   return [
+    slopPreventionPrompt(),
+    iosFeelPrompt(),
     BUILD_SEQUENCE,
     DATA_STATE_RULES,
     PRIMITIVES_RULES,
@@ -122,14 +136,18 @@ ${roleBlock}`;
 }
 
 /** Shorter anti-slop rules for design polish agent. */
-export const DESIGN_QUALITY_RULES = `### Visual quality (tokens.ts + vector icons)
-- Warm cream background, soft charcoal text, spec primaryColor as dominant CTA color.
-- @expo/vector-icons only — no emoji icons. Real seeded content — no placeholder copy.
-- Generous spacing, card shadows, font loading via expo-font. Zero dead buttons.`;
+export const DESIGN_QUALITY_RULES = `### Visual quality (iOS native + tokens)
+- iOS grouped background, system font on functional UI, 17pt body, 34pt large titles.
+- spec.vibe.primaryColor as tint/CTA via applyBrandPrimary — not Appable platform colors.
+- Primary color on ≤ ~30% of elements per screen; big stats = label color.
+- ONE dominant CTA per screen; max 5 bottom tabs (prefer 4).
+- GroupedSection + SettingsRow for lists; no elevation shadows; Ionicons/AppIcon only.
+- Seed 8–15 varied records; progress bars 30–70% filled. Zero dead buttons.`;
 
 export function designPolishUserMessage(report: string): string {
   return [
     "Rule 7 design audit found gaps. Fix EVERY item.",
+    "Apply slop prevention + iOS native feel: grouped lists, system font, no Material tells.",
     "Use tokens.ts, auth.ts, base components, data-driven strings.",
     "",
     report,

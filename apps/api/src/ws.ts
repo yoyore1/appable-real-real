@@ -7,9 +7,9 @@ import type { AuthUser } from "./auth.js";
 import { addSocket, removeSocket, emit } from "./events.js";
 import { encodeMessageWithAttachments } from "@appable/shared";
 import { handleChat } from "./interview.js";
-import { runBuild, runEdit, cancelBuild, isBuilding } from "./agent/loop.js";
+import { runBuild, runEdit, cancelBuild, isBuilding, reconcileStaleBuildingStatus } from "./agent/loop.js";
 import { enrichWithVisionContext } from "./vision.js";
-import { restoreCheckpoint, touch } from "./orchestrator.js";
+import { resolveLivePreview, restoreCheckpoint, touch } from "./orchestrator.js";
 
 /**
  * WS gateway: one socket per open project.
@@ -71,7 +71,23 @@ export async function wsRoutes(app: FastifyInstance): Promise<void> {
     addSocket(projectId, socket);
     socket.on("close", () => removeSocket(projectId, socket));
 
-    socket.send(serializeEvent({ type: "project.status", status: project.status as never }));
+    await reconcileStaleBuildingStatus(projectId);
+    const statusProject = await db.project.findUnique({ where: { id: projectId } });
+    socket.send(
+      serializeEvent({ type: "project.status", status: (statusProject?.status ?? project.status) as never }),
+    );
+
+    const livePreview = await resolveLivePreview(project);
+    if (livePreview) {
+      socket.send(
+        serializeEvent({
+          type: "preview.status",
+          status: "ready",
+          webUrl: livePreview.webUrl,
+          expUrl: livePreview.expUrl,
+        }),
+      );
+    }
 
     const latestSpec = await db.spec.findFirst({
       where: { projectId: project.id },

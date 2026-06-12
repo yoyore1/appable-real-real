@@ -21,6 +21,7 @@ import {
   resetToGitRef,
   touch,
   verifyApp,
+  resolveLivePreview,
 } from "../orchestrator.js";
 import {
   buildSystemPrompt,
@@ -46,6 +47,20 @@ export function cancelBuild(projectId: string): void {
 
 export function isBuilding(projectId: string): boolean {
   return activeBuilds.has(projectId);
+}
+
+/** DB stuck on "building" after API restart while the app already runs. */
+export async function reconcileStaleBuildingStatus(projectId: string): Promise<void> {
+  if (isBuilding(projectId)) return;
+  const db = getDb();
+  const project = await db.project.findUnique({ where: { id: projectId } });
+  if (!project || !["building", "error"].includes(project.status)) return;
+  if (!(await resolveLivePreview(project))) return;
+  const verifyError = await verifyApp(projectId);
+  if (verifyError) return;
+  await db.project.update({ where: { id: projectId }, data: { status: "running" } });
+  emit(projectId, { type: "project.status", status: "running" });
+  emit(projectId, { type: "agent.status", status: "done", message: "Your app is ready." });
 }
 
 async function logBuild(
@@ -311,18 +326,6 @@ export async function runEdit(
         status(projectId, "checking", "Making sure your app still loads...");
         const verifyError = await verifyApp(projectId);
         if (verifyError) {
-          await resetToGitRef(projectId, safeRef);
-          await sendEditReply(
-            projectId,
-            conversation.id,
-            "I couldn't apply that change without breaking your app, so I left everything as it was.",
-            "tap-edit",
-          );
-          status(projectId, "idle", "Change rolled back - your app is untouched.");
-          return;
-        }
-        const hygieneError = await runHygienePass(projectId, spec, state, "edit");
-        if (hygieneError) {
           await resetToGitRef(projectId, safeRef);
           await sendEditReply(
             projectId,

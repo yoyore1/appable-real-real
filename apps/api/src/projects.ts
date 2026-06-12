@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { getDb } from "@appable/db";
 import { requireAuth } from "./auth.js";
 import { ensureRunning, resolveLivePreview, stopProject, undoLastChange } from "./orchestrator.js";
-import { cancelBuild, isBuilding } from "./agent/loop.js";
+import { cancelBuild, isBuilding, reconcileStaleBuildingStatus } from "./agent/loop.js";
 import { ensureProjectSpec } from "./interview.js";
 
 export async function projectRoutes(app: FastifyInstance): Promise<void> {
@@ -41,8 +41,19 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
     if (!project || project.userId !== req.user.userId) {
       return reply.code(404).send({ error: "Project not found" });
     }
-    const preview = await resolveLivePreview(project);
-    return { ...project, preview };
+    await reconcileStaleBuildingStatus(project.id);
+    const fresh =
+      project.status === "building"
+        ? await db.project.findUnique({
+            where: { id: req.params.id },
+            include: {
+              specs: { orderBy: { version: "desc" }, take: 1 },
+              checkpoints: { orderBy: { createdAt: "desc" }, take: 20 },
+            },
+          })
+        : project;
+    const preview = await resolveLivePreview(fresh ?? project);
+    return { ...(fresh ?? project), preview };
   });
 
   app.get<{ Params: { id: string }; Querystring: { kind?: string } }>(

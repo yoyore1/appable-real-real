@@ -68,12 +68,20 @@ interface TappedElement {
   fontSize: string;
   fontWeight: string;
   fontFamily: string;
+  /** True when the tap hit empty padding — background color only. */
+  backgroundOnly?: boolean;
 }
 
 function shortTapLabel(text: string | undefined): string {
   if (!text) return "";
   const line = text.replace(/[\r\n]+/g, " ").replace(/\s+/g, " ").trim();
   return line.length > 48 ? line.slice(0, 48) : line;
+}
+
+/** Stat/session/goal cards — not the full page background. */
+function isCardBoxTestId(id: string | null | undefined): boolean {
+  if (!id) return false;
+  return /^(stat-|recent-session-|home-goal-|session-|goal-)/.test(id);
 }
 
 function rgbToHex(rgb: string): string {
@@ -132,6 +140,12 @@ export function Build({
 
   function hasPendingTapEdits(): boolean {
     if (!tapped) return false;
+    if (tapped.backgroundOnly) {
+      const origBg = isTransparent(tapped.backgroundColor)
+        ? "#ffffff"
+        : rgbToHex(tapped.backgroundColor);
+      return draftBg !== origBg;
+    }
     for (let i = 0; i < draftTexts.length; i++) {
       if ((draftTexts[i] ?? "") !== (originalTexts[i] ?? "")) return true;
     }
@@ -169,7 +183,9 @@ export function Build({
     }
     setPendingEditNotice(false);
     setEditOn(true);
-    postToPreview({ type: "appable:edit-mode", on: true });
+    // Wake container + repair tap-to-edit bridge, then reload preview bundle.
+    void api(`/projects/${projectId}/start`, { method: "POST" }).catch(() => {});
+    setIframeKey((k) => k + 1);
   }
 
   // Receive taps from the bridge inside the iframe.
@@ -177,14 +193,18 @@ export function Build({
     function onMessage(e: MessageEvent) {
       const msg = e.data as { type?: string; el?: TappedElement };
       if (msg?.type === "appable:tapped" && msg.el) {
-        const parts =
-          msg.el.textParts && msg.el.textParts.length > 0
+        const backgroundOnly =
+          Boolean(msg.el.backgroundOnly) ||
+          (Array.isArray(msg.el.textParts) && msg.el.textParts.length === 0);
+        const parts = backgroundOnly
+          ? []
+          : msg.el.textParts && msg.el.textParts.length > 0
             ? msg.el.textParts.map((p) => p.text)
             : msg.el.text
               ? [msg.el.text]
               : [];
         setPendingEditNotice(false);
-        setTapped(msg.el);
+        setTapped({ ...msg.el, backgroundOnly });
         setDraftTexts(parts);
         setOriginalTexts(parts);
         setPartIsIcon(
@@ -208,9 +228,12 @@ export function Build({
     if (!tapped) return;
     const changes: string[] = [];
     const partUpdates: { index: number; value: string }[] = [];
+    const bgAnchor = shortTapLabel(tapped.anchorLabel ?? "");
+    const screenBg = tapped.backgroundOnly && !isCardBoxTestId(tapped.boxTestId);
     const label =
       originalTexts.find((t, i) => !partIsIcon[i] && t.trim())?.trim() ||
-      shortTapLabel(tapped.anchorLabel ?? originalTexts[0] ?? tapped.text);
+      bgAnchor ||
+      shortTapLabel(tapped.text);
 
     for (let i = 0; i < draftTexts.length; i++) {
       const next = draftTexts[i] ?? "";
@@ -230,7 +253,7 @@ export function Build({
     if (partUpdates.length > 0) {
       postToPreview({ type: "appable:apply-parts", parts: partUpdates });
     }
-    if (draftColor !== rgbToHex(tapped.color)) {
+    if (!tapped.backgroundOnly && draftColor !== rgbToHex(tapped.color)) {
       postToPreview({ type: "appable:apply", prop: "color", value: draftColor });
       changes.push(
         label
@@ -241,13 +264,25 @@ export function Build({
     const origBg = isTransparent(tapped.backgroundColor) ? "#ffffff" : rgbToHex(tapped.backgroundColor);
     if (draftBg !== origBg) {
       postToPreview({ type: "appable:apply", prop: "background", value: draftBg });
-      changes.push(
-        label
-          ? `set the background color of the container for "${label}" to ${draftBg}`
-          : `set the background color to ${draftBg}`,
-      );
+      if (tapped.backgroundOnly) {
+        if (screenBg) {
+          changes.push(`set the screen background color to ${draftBg}`);
+        } else if (tapped.boxTestId) {
+          changes.push(`set the background color to ${draftBg}`);
+        } else if (bgAnchor) {
+          changes.push(`set the background color of the container for "${bgAnchor}" to ${draftBg}`);
+        } else {
+          changes.push(`set the screen background color to ${draftBg}`);
+        }
+      } else {
+        changes.push(
+          label
+            ? `set the background color of the container for "${label}" to ${draftBg}`
+            : `set the background color to ${draftBg}`,
+        );
+      }
     }
-    if (draftBold !== originalBold) {
+    if (!tapped.backgroundOnly && draftBold !== originalBold) {
       const weight = draftBold ? "700" : "400";
       postToPreview({ type: "appable:apply", prop: "fontWeight", value: weight });
       const weightWord = draftBold ? "bold" : "normal";
@@ -257,7 +292,7 @@ export function Build({
           : `set the font weight to ${weightWord}`,
       );
     }
-    if (draftFont !== originalFont) {
+    if (!tapped.backgroundOnly && draftFont !== originalFont) {
       const cssFont = TAP_FONT_CSS[draftFont];
       postToPreview({ type: "appable:apply", prop: "fontFamily", value: cssFont });
       const fontLabel = fontPresetLabel(draftFont);
@@ -277,7 +312,13 @@ export function Build({
     const hasText = partUpdates.length > 0;
     const hasFont = draftBold !== originalBold || draftFont !== originalFont;
     const target =
-      hasText && tapped.textTestId
+      tapped.backgroundOnly && screenBg
+        ? `the main screen background`
+        : tapped.backgroundOnly && tapped.boxTestId
+          ? `the element with testID "${tapped.boxTestId}"`
+          : tapped.backgroundOnly && bgAnchor
+            ? `the card container for "${bgAnchor}"`
+            : hasText && tapped.textTestId
         ? `the element with testID "${tapped.textTestId}"`
         : (hasColor || hasFont) && !hasBg && tapped.textTestId
           ? `the element with testID "${tapped.textTestId}"`
@@ -372,22 +413,23 @@ export function Build({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [s.checkpointsVersion]);
 
-  const status = s.projectStatus ?? project?.status ?? "new";
+  const status = reconcileProjectStatus(s.projectStatus, project?.status);
   const spec = s.spec ?? project?.specs?.[0]?.data ?? null;
-  const preview = s.preview?.status === "ready" ? s.preview : null;
-  const baseWebUrl = preview?.webUrl ?? project?.preview?.webUrl ?? null;
+  const livePreview = s.preview?.status === "ready" ? s.preview : project?.preview;
+  const baseWebUrl = livePreview?.webUrl ?? null;
   const webUrl =
     baseWebUrl && previewNonce > 0
       ? `${baseWebUrl}${baseWebUrl.includes("?") ? "&" : "?"}_r=${previewNonce}`
       : baseWebUrl;
-  /** QR only when Metro confirmed live via websocket — never a stale cached URL. */
-  const expUrl = preview?.expUrl ?? null;
+  const expUrl = livePreview?.expUrl ?? null;
   const previewStarting = starting || s.preview?.status === "starting";
   const building = status === "building";
-  /** Only show the live preview once the initial build finished — not the empty Expo template mid-build. */
+  const previewReady = s.preview?.status === "ready" || Boolean(project?.preview?.webUrl);
+  /** Hide the empty template early in build; show live Metro once the bundle exists. */
   const showPreview =
-    Boolean(webUrl) && !building && (status === "running" || status === "sleeping");
-  const previewReady = s.preview?.status === "ready";
+    Boolean(webUrl) &&
+    (!building || previewReady) &&
+    (status === "running" || status === "sleeping" || building);
   const buildProgress = useBuildProgress({
     active: building,
     agentStatus: s.agentStatus,
@@ -395,6 +437,23 @@ export function Build({
     previewReady,
     expectedScreens: spec?.screens.length,
   });
+
+  // Keep project detail fresh while building — WS/DB can lag after build finishes.
+  useEffect(() => {
+    if (!building) return;
+    let cancelled = false;
+    const refresh = () => {
+      api<ProjectDetail>(`/projects/${projectId}`).then((p) => {
+        if (!cancelled) setProject(p);
+      });
+    };
+    refresh();
+    const id = window.setInterval(refresh, 4000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [building, projectId]);
 
   // Auto-wake a sleeping/stale workspace (app already exists, container off).
   useEffect(() => {
@@ -518,6 +577,9 @@ export function Build({
       setUndoBusy(false);
     }
   }
+
+  const screenBgTap =
+    tapped?.backgroundOnly && !isCardBoxTestId(tapped.boxTestId);
 
   return (
     <div className="build-page">
@@ -719,16 +781,21 @@ export function Build({
             <div className="edit-panel">
               <div className="edit-panel-head">
                 <b>
-                  {shortTapLabel(tapped.anchorLabel ?? originalTexts[0] ?? tapped.text) ||
-                    tapped.boxTestId ||
-                    tapped.textTestId ||
-                    "Element"}
+                  {screenBgTap
+                    ? "Screen background"
+                    : tapped.backgroundOnly
+                      ? "Background"
+                      : shortTapLabel(tapped.anchorLabel ?? originalTexts[0] ?? tapped.text) ||
+                      tapped.boxTestId ||
+                      tapped.textTestId ||
+                      "Element"}
                 </b>
                 <button className="btn-link" onClick={closeTapPanel}>
                   Cancel
                 </button>
               </div>
-              {draftTexts.map((part, i) => (
+              {draftTexts.length > 0 &&
+                draftTexts.map((part, i) => (
                 <label className="edit-field" key={`edit-part-${i}`}>
                   <span>
                     {partIsIcon[i]
@@ -743,6 +810,14 @@ export function Build({
                   />
                 </label>
               ))}
+              {tapped.backgroundOnly && (
+                <p className="muted small" style={{ margin: "0 0 8px" }}>
+                  {screenBgTap
+                    ? "This changes the whole page background. Tap a stat card to change just that card."
+                    : "Tap text to change wording — empty areas edit background color only."}
+                </p>
+              )}
+              {!tapped.backgroundOnly && (
               <div className="edit-font-row">
                 <label className="edit-field">
                   <span>Font</span>
@@ -777,7 +852,9 @@ export function Build({
                   </div>
                 </div>
               </div>
+              )}
               <div className="edit-colors">
+                {!tapped.backgroundOnly && (
                 <label className="edit-field">
                   <span>Text color</span>
                   <input
@@ -786,11 +863,16 @@ export function Build({
                     onChange={(e) => setDraftColor(e.target.value)}
                   />
                 </label>
+                )}
                 <label className="edit-field">
                   <span>
-                    {shortTapLabel(tapped.anchorLabel ?? originalTexts[0])
-                      ? `${shortTapLabel(tapped.anchorLabel ?? originalTexts[0])} box background`
-                      : "Box background"}
+                    {screenBgTap
+                      ? "Page background color"
+                      : tapped.backgroundOnly
+                        ? "Background color"
+                        : shortTapLabel(tapped.anchorLabel ?? originalTexts[0])
+                          ? `${shortTapLabel(tapped.anchorLabel ?? originalTexts[0])} box background`
+                          : "Box background"}
                   </span>
                   <input
                     type="color"
@@ -960,6 +1042,15 @@ export function Build({
       </div>
     </div>
   );
+}
+
+/** WS can lag behind the DB (e.g. missed project.status after build finishes). */
+function reconcileProjectStatus(
+  wsStatus: string | null | undefined,
+  dbStatus: string | null | undefined,
+): string {
+  if (wsStatus === "building" && dbStatus === "running") return "running";
+  return wsStatus ?? dbStatus ?? "new";
 }
 
 function statusLabel(status: string): string {

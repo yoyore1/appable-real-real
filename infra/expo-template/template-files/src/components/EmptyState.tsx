@@ -31,6 +31,6 @@ export function EmptyState({ testID, title, message, actionLabel, onAction, icon
 
 const styles = StyleSheet.create({
   wrap: { alignItems: "center", paddingVertical: spacing.xl, gap: spacing.sm },
-  title: { ...typeScale.subtitle, textAlign: "center" },
-  message: { ...typeScale.body, color: colors.textMuted, textAlign: "center" },
+  title: { ...typeScale.headline, textAlign: "center" },
+  message: { ...typeScale.body, color: colors.secondaryLabel, textAlign: "center" },
 });

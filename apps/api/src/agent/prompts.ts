@@ -1,6 +1,8 @@
 import type { AppSpec } from "@appable/shared";
 import { PLATFORM_AGENT_RULES } from "../platformGlue.js";
 import { codeDisciplinePrompt } from "./codeDiscipline.js";
+import { slopPreventionEditPrompt } from "./slopPrevention.js";
+import { iosFeelEditPrompt } from "./iosFeel.js";
 
 export function buildSystemPrompt(spec: AppSpec, files: string[]): string {
   return `You are Appable's build agent: an expert React Native / Expo engineer.
@@ -17,9 +19,11 @@ ${files.map((f) => `  - ${f}`).join("\n")}
 - The entry point is App.tsx. Keep everything reachable from there.
 - react-native-web is installed; the app must render correctly on web too,
   because the customer's preview is the web build in a phone frame.
-- Scaffold may include src/theme/tokens.ts, src/lib/auth.ts, src/lib/storage.ts,
-  and base components in src/components/ (Screen, Card, AppButton, Row, EmptyState).
-  Extend them — do not reinvent parallel patterns.
+- Scaffold includes src/theme/tokens.ts (iOS semantic colors + applyBrandPrimary),
+  src/lib/auth.ts, src/lib/storage.ts, src/lib/haptics.ts, and iOS base components:
+  Screen, Card, AppButton, Row, EmptyState, GroupedSection, SettingsRow,
+  SegmentedControl, SearchField, Sheet, AppAlert, ActionMenu, AppIcon, Blur.
+  Extend them — do not reinvent parallel patterns or raw ActionSheetIOS in screens.
 
 ${PLATFORM_AGENT_RULES}
 
@@ -33,7 +37,8 @@ ${PLATFORM_AGENT_RULES}
 5. Use React Navigation ONLY if already installed; otherwise state-based nav in App.tsx.
 6. PERSIST USER DATA via AsyncStorage + src/lib/storage.ts pattern: load on mount,
    save on every change. Works on web (localStorage) with the same code paths.
-7. Style with StyleSheet.create + src/theme/tokens.ts. spec.vibe.primaryColor is brand primary.
+7. Style with StyleSheet.create + src/theme/tokens.ts. FIRST build step on tokens:
+   call applyBrandPrimary(spec.vibe.primaryColor). iOS system font for functional UI.
 7b. TAP-TO-EDIT CONTRACT — hard gate (automated hygiene runs AFTER design polish):
    - Every user-visible Text gets its own testID — never rely on a parent
      ScrollView/screen testID alone. Split combined copy into sibling Text
@@ -53,6 +58,7 @@ ${PLATFORM_AGENT_RULES}
 8. Complete Rule 7 self-review BEFORE calling read_build_logs or saying BUILD COMPLETE.
 9. After writing the app, call read_build_logs to verify bundle + preview. Fix every error.
 10. When logs are clean and Rule 7 passes, reply with plain-text summary starting with "BUILD COMPLETE:".
+11. v2 will use native tab/stack (Layer 2) — stay compatible; use bottom tabs in App.tsx for now.
 
 ## The app spec
 ${JSON.stringify(spec, null, 2)}
@@ -73,6 +79,10 @@ ${files.map((f) => `  - ${f}`).join("\n")}
 ${JSON.stringify({ name: spec.name, tagline: spec.tagline, screens: spec.screens.map((s) => s.name), vibe: spec.vibe })}
 
 ${PLATFORM_AGENT_RULES}
+
+${slopPreventionEditPrompt()}
+
+${iosFeelEditPrompt()}
 
 ## Hard rules
 1. Make the SMALLEST change that fulfills the request. Do not refactor,
@@ -118,6 +128,10 @@ read_build_logs to re-check after fixes. When errors are resolved, reply with
 a short summary starting with "FIX COMPLETE:".
 
 ${PLATFORM_AGENT_RULES}
+
+${slopPreventionEditPrompt()}
+
+${iosFeelEditPrompt()}
 
 If the error mentions appable-bridge or index.ts entry: do NOT edit those files —
 fix the actual app bug in App.tsx / src/. read_build_logs auto-repairs platform glue.
@@ -169,7 +183,7 @@ ${codeDisciplinePrompt(spec)}
 
 Focus on audit findings: wire dead buttons, move hardcoded JSX strings into data,
 replace any types, add missing auth/settings flows, use base components + tokens,
-load fonts via expo-font, replace emoji icons with @expo/vector-icons.
+replace emoji icons with AppIcon/Ionicons, use GroupedSection/SettingsRow for settings lists.
 
 Use read_file / write_file. Smallest complete-file edits.
 Call read_build_logs when done. Reply starting with "FIX COMPLETE:".

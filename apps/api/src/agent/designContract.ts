@@ -13,3 +13,11 @@ export {
   TAP_HYGIENE_GATE,
   WIRING_AND_EDIT_RULES,
 } from "./codeDiscipline.js";
+export {
+  slopPreventionEditPrompt,
+  slopPreventionPrompt,
+} from "./slopPrevention.js";
+export {
+  iosFeelEditPrompt,
+  iosFeelPrompt,
+} from "./iosFeel.js";

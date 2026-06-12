@@ -12,10 +12,13 @@ const BRIDGE_PATH = path.resolve(
 );
 
 let cachedBridge: string | null = null;
+let cachedBridgeMtime = 0;
 
 export function loadBridgeSource(): string {
-  if (cachedBridge) return cachedBridge;
+  const stat = fs.statSync(BRIDGE_PATH);
+  if (cachedBridge && stat.mtimeMs === cachedBridgeMtime) return cachedBridge;
   cachedBridge = fs.readFileSync(BRIDGE_PATH, "utf8");
+  cachedBridgeMtime = stat.mtimeMs;
   return cachedBridge;
 }
 

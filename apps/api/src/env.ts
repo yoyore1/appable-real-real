@@ -75,7 +75,7 @@ export const env = {
   /** Edits run on Fireworks for speed; falls back to MODEL_BUILD on DeepInfra if unset. */
   modelEdit: process.env.MODEL_EDIT ?? "accounts/fireworks/models/minimax-m2p7",
   /** Vision model for attached reference photos (DeepInfra; edit model is text-only). */
-  modelVision: req("MODEL_VISION", "Qwen/Qwen2.5-VL-7B-Instruct"),
+  modelVision: req("MODEL_VISION", "Qwen/Qwen3-VL-30B-A3B-Instruct"),
   /** On-disk storage for chat photo uploads. */
   chatUploadsDir: req("CHAT_UPLOADS_DIR", "./data/chat-uploads"),
   /** Stronger model used when BUILD_ROUTING=mixed and heal round >= 2. */

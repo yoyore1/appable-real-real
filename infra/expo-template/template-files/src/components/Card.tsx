@@ -1,11 +1,12 @@
 import { Pressable, StyleSheet, View, type ViewProps } from "react-native";
-import { colors, radius, shadow, spacing } from "../theme/tokens.js";
+import { colors, radius, spacing } from "../theme/tokens.js";
 
 type Props = ViewProps & {
   testID?: string;
   onPress?: () => void;
 };
 
+/** iOS grouped card — no elevation shadow; contrast from grouped background. */
 export function Card({ children, testID, onPress, style, ...rest }: Props) {
   if (onPress) {
     return (
@@ -32,7 +33,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
     borderRadius: radius.md,
     padding: spacing.md,
-    ...shadow.card,
+    overflow: "hidden",
   },
-  pressed: { opacity: 0.92 },
+  pressed: { opacity: 0.7 },
 });
