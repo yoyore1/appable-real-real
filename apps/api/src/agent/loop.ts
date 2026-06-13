@@ -5,6 +5,7 @@ import {
   BUILD_CALL_TIMEOUT_MS,
   completeChatResilient,
   pickAgentModel,
+  pickBuildFallback,
   pickModel,
   type ChatMessage,
   type ModelChoice,
@@ -538,6 +539,13 @@ async function agentLoop(
   // work instead of treating that as completion.
   const MAX_NUDGES = 3;
   let nudges = 0;
+  // Some M-series builds emit tool_calls whose `arguments` field is not valid
+  // JSON for our schema. Track how many we hit in a row; if the primary model
+  // can't produce a parseable call after a few attempts, swap it for the
+  // fallback so the build keeps moving.
+  const MAX_MALFORMED_TOOL_CALLS = 3;
+  let malformedToolCalls = 0;
+  let activeChoice = choice;
 
   for (let i = 0; i < maxIterations; i++) {
     if (state.cancelled) return false;
@@ -545,7 +553,7 @@ async function agentLoop(
     // Resilient call: per-attempt timeout, retry, then DeepInfra fallback.
     // A dead provider surfaces as a failed build, never a silent hang.
     const { msg, usedFallback } = await completeChatResilient({
-      choice,
+      choice: activeChoice,
       messages,
       tools: agentTools,
       timeoutMs: BUILD_CALL_TIMEOUT_MS,
@@ -583,11 +591,53 @@ async function agentLoop(
       if (call.type !== "function") continue;
 
       let args: Record<string, unknown> = {};
+      let argsValid = true;
       try {
-        args = JSON.parse(call.function.arguments || "{}");
-      } catch {
-        // leave args empty; the tool will fail loudly and the model can retry
+        const raw = call.function.arguments;
+        if (raw && typeof raw === "string" && raw.trim() !== "") {
+          args = JSON.parse(raw);
+        }
+      } catch (err) {
+        argsValid = false;
+        malformedToolCalls++;
+        const snippet = (call.function.arguments || "").slice(0, 120);
+        await logBuild(
+          projectId,
+          "warn",
+          "system",
+          `Malformed tool call to ${call.function.name} (${snippet.length > 0 ? snippet : "empty args"}): ${err instanceof Error ? err.message : String(err)}`,
+        );
+        if (malformedToolCalls >= MAX_MALFORMED_TOOL_CALLS) {
+          const fb = pickBuildFallback();
+          if (fb.model !== activeChoice.model || fb.client !== activeChoice.client) {
+            await logBuild(
+              projectId,
+              "warn",
+              "system",
+              `Primary model returned ${malformedToolCalls} malformed tool calls in a row — switching to fallback (${fb.model}).`,
+            );
+            activeChoice = fb;
+            malformedToolCalls = 0;
+            // Nudge the new model with a reminder of the tool schema.
+            messages.push({
+              role: "user",
+              content:
+                "Reminder: tool calls must be valid JSON. Each argument object must match the schema exactly. " +
+                "Example for write_file: {\"path\": \"app/(tabs)/index.tsx\", \"content\": \"...\"}.",
+            });
+            break;
+          }
+        }
+        // Tell the model why the call was rejected so it can self-correct.
+        messages.push({
+          role: "tool",
+          tool_call_id: call.id,
+          content: `Error: arguments for ${call.function.name} were not valid JSON. Re-emit the call with a complete JSON object matching the schema.`,
+        });
+        continue;
       }
+      // Successful parse: reset the counter if we were accumulating failures.
+      if (argsValid) malformedToolCalls = 0;
 
       reportToolStatus(projectId, call.function.name, args);
 
