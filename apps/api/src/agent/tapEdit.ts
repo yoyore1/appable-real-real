@@ -1876,9 +1876,17 @@ function patchBackgroundByTestId(
 
   if (isSharedMapTemplateElement(content, el)) return null;
 
-  // A custom component usage (<AppButton …>) takes no style prop here, and
-  // walking to the surrounding wrapper paints way more than the user tapped.
-  // The component-passthrough strategy patches inside the component instead.
+  // Custom component usages (<Card>, <AppButton>, …) — first try to extend
+  // the call-site `style` prop with the new color. That way each `<Card>` /
+  // `<AppButton>` usage can be colored independently instead of patching the
+  // shared component (which would re-color every other usage too — e.g. all
+  // three stat cards turning red when only the middle one was tapped).
+  if (isCustomComponentTag(el.tag) && hasStyleAttribute(el.tag)) {
+    const patched = patchStyleOnTag(el.tag, "backgroundColor", color);
+    if (patched) return replaceTagAt(content, el, patched);
+  }
+  // A custom component usage that doesn't carry a style prop falls through to
+  // the component-passthrough strategy, which patches inside the component.
   if (isCustomComponentTag(el.tag)) return null;
 
   if (isContainerTag(el.tag)) {
@@ -3139,6 +3147,10 @@ function patchStyleOnTag(tag: string, prop: StyleProp, value: string): string | 
 
 function formatStyleOverride(prop: StyleProp, value: string): string {
   return `{ ${prop}: '${value}' }`;
+}
+
+function hasStyleAttribute(tag: string): boolean {
+  return findStyleAttribute(tag) !== null;
 }
 
 function findStyleAttribute(

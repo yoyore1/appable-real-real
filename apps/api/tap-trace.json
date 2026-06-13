@@ -597,7 +597,7 @@
       },
       "background-color": {
         "ok": true,
-        "file": "src/components/Card.tsx",
+        "file": "app/(tabs)/index.tsx",
         "syntaxErrors": []
       }
     },
@@ -648,7 +648,7 @@
       },
       "background-color": {
         "ok": true,
-        "file": "src/components/Card.tsx",
+        "file": "app/(tabs)/index.tsx",
         "syntaxErrors": []
       }
     },
@@ -699,7 +699,7 @@
       },
       "background-color": {
         "ok": true,
-        "file": "src/components/Card.tsx",
+        "file": "app/(tabs)/index.tsx",
         "syntaxErrors": []
       }
     },
@@ -1425,7 +1425,7 @@
       },
       "background-color": {
         "ok": true,
-        "file": "src/components/Card.tsx",
+        "file": "app/(stack)/streak/[id].tsx",
         "syntaxErrors": []
       }
     },
