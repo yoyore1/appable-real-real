@@ -39,17 +39,20 @@ const cases = [
     ],
   },
   {
-    label: "163 card BACKGROUND (must stay on Card, not on home-stats row)",
+    label: "163 card BACKGROUND (must stay on the single Card call site, not the row)",
     file: "app/(tabs)/index.tsx",
     msg: `[Tap edit] In the app, find the element with testID "home-stat-total" and set the background color to ${BG}. Change only what was tapped.`,
-    // Either: patch the home file's <Card …> if it's a static wrapper, OR
-    // patch the Card component file. Either way, the outer <View testID="home-stats">
-    // row must NOT receive the background color.
-    must: /<Card testID="home-stat-total"|<View testID=\{testID\} style=\{\[styles\.card, style, \{ backgroundColor: '#34c759' \}\]/,
+    // Custom components with a `style` prop (like <Card testID="home-stat-total" style={…}>)
+    // should be patched at the call site, not inside the shared component file. This
+    // prevents "tap one card, all cards turn red" — the card-scope regression.
+    must: /<Card testID="home-stat-total" style=\{\[styles\.statCard, \{ backgroundColor: '#34c759' \}\]\}/,
     mustNot: [
-      /testID="home-stats".*backgroundColor/s,
+      // The `home-stats` row tag itself must not receive a backgroundColor.
+      // We anchor to the home-stats tag's `>` (end of opening tag) on the same
+      // line, so a later `backgroundColor` on a child Card does not match.
+      /<View testID="home-stats"[^>]*backgroundColor/,
     ],
-    fileMustBe: "src/components/Card.tsx",
+    fileMustBe: "app/(tabs)/index.tsx",
   },
   {
     label: "163 box TEXT color on text directly (no anchor)",

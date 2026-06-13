@@ -59,21 +59,28 @@ function runCase(label, testId, expectFile) {
       detail.problems.push("unexpectedly patched AppButton");
     // Verify the patched file only modifies the targeted Card line, not all 3
     if (result.file.endsWith("index.tsx")) {
-      const before = sources.get(result.file);
+      const before = sources.get(result.file) ?? "";
       const after = result.updated;
       const cardRe = new RegExp(
         `<Card testID="${testId}"[^>]*style=\\{\\[[^\\]]*\\{ backgroundColor: '#a1b2c3' \\}\\]\\}`,
       );
       if (!cardRe.test(after))
         detail.problems.push(`call site not extended as expected for ${testId}`);
-      // The other 2 stat cards must be untouched
+      // The other 2 stat cards must be untouched BY THIS PATCH. We diff the
+      // line that mentions each non-target card against the same line in the
+      // pre-patch source — if anything changed, that's a regression.
       for (const otherId of STAT_CARD_IDS) {
         if (otherId === testId) continue;
-        const otherRe = new RegExp(
-          `<Card testID="${otherId}"[^>]*style=\\{\\[styles\\.statCard,?\\s*\\{ backgroundColor`,
+        const otherLineRe = new RegExp(
+          `^[^\n]*<Card testID="${otherId}"[^\n]*$`,
+          "m",
         );
-        if (otherRe.test(after))
-          detail.problems.push(`regression: ${otherId} call site was also modified`);
+        const beforeLine = otherLineRe.exec(before)?.[0] ?? "";
+        const afterLine = otherLineRe.exec(after)?.[0] ?? "";
+        if (beforeLine && afterLine && beforeLine !== afterLine)
+          detail.problems.push(
+            `regression: ${otherId} call site changed (before: ${beforeLine.slice(0, 60)}…)`,
+          );
       }
     }
   }

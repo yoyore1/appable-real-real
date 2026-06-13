@@ -8,7 +8,7 @@ const goodSample = `export function Settings() {
   return (
     <View>
       <Pressable testID="meal-reminder-row">
-        <Text testID="meal-reminder-label">Meal Reminder</Text>
+        <Text testID="meal-reminder-label">{STRINGS.mealReminder}</Text>
       </Pressable>
     </View>
   );

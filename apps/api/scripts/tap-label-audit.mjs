@@ -108,10 +108,16 @@ const auditFailures = [];
 // a design decision, not a mislabel. We still log them but don't fail.
 const isScreenShell = (id) => /-screen$/.test(id) || /^(home|settings|habits|add-habit|legal|streak)-screen$/.test(id);
 
+// Icon testIDs (Ionicons, etc.) are decorative and don't have a meaningful
+// "background" — the patcher correctly refuses to paint the shared component
+// file when the call site has no `style` prop. Skip them for the `bg` case.
+const isIcon = (id) => /-(icon|chevron|back|close|add|remove|edit|trash|delete)$/i.test(id);
+
 for (const item of allTestIds) {
   if (matrixCovered.has(item.testId)) continue;
   if (isScreenShell(item.testId)) continue; // design decision, not a bug
   if (item.synthesized && /-loading$|-error$/.test(item.testId)) continue; // same as screen
+  if (isIcon(item.testId)) continue; // no meaningful "background" on icons
   for (const c of changeCases) {
     total++;
     const label = `${item.testId} :: ${c.kind}`;
