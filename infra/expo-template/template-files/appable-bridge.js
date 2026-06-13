@@ -95,6 +95,25 @@ if (
     return broad;
   }
 
+  /** A testID that looks like a leaf text node (e.g. `…-value`, `…-label`)
+   *  is the wrong target for "change the background of this card". Walk up
+   *  to the next non-broad testID that isn't a text-leaf suffix. */
+  var TEXT_LEAF_SUFFIX_RE = /-(value|label|name|title|text|desc|message|header|icon|chevron|tagline|built|version|toggle|input|placeholder|empty|loading|error|content|subtitle|body|caption)$/;
+  function findBoxTestId(el) {
+    var nearest = findNearestTestId(el);
+    if (!nearest) return null;
+    if (!TEXT_LEAF_SUFFIX_RE.test(nearest)) return nearest;
+    var cur = el && el.parentElement;
+    var steps = 0;
+    while (cur && cur !== document.body && steps < 12) {
+      var tid = testIdOn(cur);
+      if (tid && !isBroadTestId(tid) && !TEXT_LEAF_SUFFIX_RE.test(tid)) return tid;
+      cur = cur.parentElement;
+      steps++;
+    }
+    return nearest;
+  }
+
   function textChildAtPoint(parent, x, y) {
     if (!parent || !parent.children) return null;
     for (var i = parent.children.length - 1; i >= 0; i--) {
@@ -389,7 +408,7 @@ if (
     }
 
     var textTestId = findNearestTestId(styleEl);
-    var boxTestId = findNearestTestId(bgEl);
+    var boxTestId = findBoxTestId(bgEl);
     if (boxTestId && isBroadTestId(boxTestId)) boxTestId = null;
     var anchor = bestResolved ? bestResolved.text : boxLabel;
     var backgroundOnly = parts.length === 0;

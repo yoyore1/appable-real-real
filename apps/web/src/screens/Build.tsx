@@ -79,10 +79,42 @@ function shortTapLabel(text: string | undefined): string {
   return line.length > 48 ? line.slice(0, 48) : line;
 }
 
-/** Stat/session/goal cards — not the full page background. */
+/** Stat/session/goal cards — not the full page background.
+ *
+ * The bridge's `boxTestId` is the nearest testID on or above the tapped
+ * element. For a stat card, that can be either:
+ *   - the card itself (`home-stat-total`)
+ *   - a child text node (`home-stat-total-value`, `-label`)
+ *   - a parent row (`home-stats`) — this is the "row, not card" case
+ *
+ * We treat anything that contains a known card-style segment (`stat`, `goal`,
+ * `session`, `card`, `empty`, `loading`, `error`, or `-add-`, `-view-all`,
+ * `-cancel`, `-save`, `-tips-`, `-row`) as a card, except for known row/wrapper
+ * suffixes that the bridge would have nulled out via `isBroadTestId` already
+ * (we don't get those here). Anything that ends in a text-label suffix
+ * (`-value`, `-label`, `-name`, `-title`, `-text`, `-desc`, `-message`,
+ * `-header`, `-icon`, `-chevron`) is treated as a child of a card, so the
+ * card-styling UI is still correct.
+ */
 function isCardBoxTestId(id: string | null | undefined): boolean {
   if (!id) return false;
-  return /^(stat-|recent-session-|home-goal-|session-|goal-)/.test(id);
+  // Common text-label suffixes — a tap on the text inside a card should still
+  // surface the card's background, not the page background.
+  if (/(?:^|-)(value|label|name|text|desc|message|header|icon|chevron|tagline|built|version|toggle|input)$/.test(id)) {
+    return true;
+  }
+  // Card / box segments seen across live apps. Not leading-anchored because
+  // testIDs in the wild are usually `home-stat-total` / `settings-notif-row`,
+  // not `stat-…`.
+  if (/(?:^|-)(stat|goal|session|recent-session|card|empty|loading|error|add|view-all|cancel|save|tips|row)(-|$)/.test(id)) {
+    // `home-stats` / `home-quick-list` / `add-habit-name-group` are wrappers
+    // and rows, not cards. `add-habit-tips-title` is a title, not a tips
+    // card. `*-screen` is a screen shell (would have been nulled out by
+    // isBroadTestId upstream, but defend in depth).
+    if (/(?:^|-)(stats|list|group|title|quick-title|quick-list|screen)$/.test(id)) return false;
+    return true;
+  }
+  return false;
 }
 
 function rgbToHex(rgb: string): string {
@@ -818,7 +850,7 @@ export function Build({
               {tapped.backgroundOnly && (
                 <p className="muted small" style={{ margin: "0 0 8px" }}>
                   {screenBgTap
-                    ? "This changes the whole page background. Tap a stat card to change just that card."
+                    ? "This changes the whole page background. Tap a card or button to change just that element."
                     : "Tap text to change wording — empty areas edit background color only."}
                 </p>
               )}

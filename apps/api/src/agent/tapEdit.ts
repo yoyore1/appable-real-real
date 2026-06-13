@@ -358,25 +358,52 @@ export function findComponentInstantiation(
 
   for (const { base, suffix } of candidates) {
     for (const content of sources.values()) {
-      // Read the full instantiation so we can capture `variant="primary"` etc.
+      // Locate the testID literal anywhere in the source; the JSX tag may
+      // span multiple lines and contain nested elements as prop values
+      // (e.g. `icon={<Ionicons name="…" />}`), so we walk the tag from
+      // its opening `<Name` to the matching `>` / `/>` using the same
+      // brace/quote-aware scanner as `scanOpeningTagEnd`.
       const escaped = base.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const re = new RegExp(
-        `<([A-Z]\\w*)\\b[^<]*?testID="${escaped}"[^<]*?(?:\\/>|>)`,
-        "s",
-      );
-      const m = content.match(re);
-      const name = m?.[1];
-      if (!name || NATIVE_TAGS.has(name)) continue;
-      const variantMatch = m[0]?.match(/\bvariant="([^"]+)"/);
-      return {
-        componentName: name,
-        base,
-        suffix,
-        variant: variantMatch?.[1],
-      };
+      const needle = `testID="${escaped}"`;
+      let searchFrom = 0;
+      while (searchFrom < content.length) {
+        const idx = content.indexOf(needle, searchFrom);
+        if (idx === -1) break;
+        searchFrom = idx + needle.length;
+        // Walk back to find the opening `<` of this tag.
+        const openIdx = walkBackToOpenAngle(content, idx);
+        if (openIdx === -1) continue;
+        const nameMatch = /^<([A-Z]\w*)/.exec(content.slice(openIdx));
+        const name = nameMatch?.[1];
+        if (!name || NATIVE_TAGS.has(name)) continue;
+        // Use the existing scanOpeningTagEnd to capture the full tag, then
+        // look for `variant` inside it.
+        const tagEnd = scanOpeningTagEnd(content, openIdx);
+        const fullTag = content.slice(openIdx, tagEnd);
+        const variantMatch = fullTag.match(/\bvariant="([^"]+)"/);
+        return {
+          componentName: name,
+          base,
+          suffix,
+          variant: variantMatch?.[1],
+        };
+      }
     }
   }
   return null;
+}
+
+/** Like walkBackToOpeningTag but always returns the index of the `<` itself. */
+function walkBackToOpenAngle(content: string, idx: number): number {
+  for (let i = idx; i >= 0; i--) {
+    if (content[i] === "<") return i;
+    if (content[i] === ">" || content[i] === "\n") {
+      // `>` closes a previous tag; newlines (rare inside one tag) abort
+      // to avoid crossing tag boundaries.
+      if (content[i] === ">") return -1;
+    }
+  }
+  return -1;
 }
 
 function componentFileExports(content: string, componentName: string): boolean {
@@ -1849,9 +1876,17 @@ function patchBackgroundByTestId(
 
   if (isSharedMapTemplateElement(content, el)) return null;
 
-  // A custom component usage (<AppButton …>) takes no style prop here, and
-  // walking to the surrounding wrapper paints way more than the user tapped.
-  // The component-passthrough strategy patches inside the component instead.
+  // Custom component usages (<Card>, <AppButton>, …) — first try to extend
+  // the call-site `style` prop with the new color. That way each `<Card>` /
+  // `<AppButton>` usage can be colored independently instead of patching the
+  // shared component (which would re-color every other usage too — e.g. all
+  // three stat cards turning red when only the middle one was tapped).
+  if (isCustomComponentTag(el.tag) && hasStyleAttribute(el.tag)) {
+    const patched = patchStyleOnTag(el.tag, "backgroundColor", color);
+    if (patched) return replaceTagAt(content, el, patched);
+  }
+  // A custom component usage that doesn't carry a style prop falls through to
+  // the component-passthrough strategy, which patches inside the component.
   if (isCustomComponentTag(el.tag)) return null;
 
   if (isContainerTag(el.tag)) {
@@ -3112,6 +3147,10 @@ function patchStyleOnTag(tag: string, prop: StyleProp, value: string): string | 
 
 function formatStyleOverride(prop: StyleProp, value: string): string {
   return `{ ${prop}: '${value}' }`;
+}
+
+function hasStyleAttribute(tag: string): boolean {
+  return findStyleAttribute(tag) !== null;
 }
 
 function findStyleAttribute(

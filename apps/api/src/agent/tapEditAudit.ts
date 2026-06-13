@@ -8,7 +8,9 @@ export type TapEditAuditIssueKind =
   | "special-case-title-render"
   | "prop-text-bad-testid"
   | "hardcoded-user-text"
-  | "rogue-tab-route";
+  | "rogue-tab-route"
+  | "icon-missing-testid"
+  | "raw-color-literal";
 
 export interface TapEditAuditIssue {
   file: string;
@@ -216,6 +218,7 @@ function findPressableIssues(content: string, file: string): TapEditAuditIssue[]
 
     const hasRowSuffix =
       /-(row|card|item|pressable)\`/.test(parsed.tag) ||
+      /-(row|card|item|pressable)\}/.test(parsed.tag) ||
       /-(row|card|item|pressable)"/.test(parsed.tag);
     if (!hasRowSuffix) {
       issues.push({
@@ -305,6 +308,57 @@ function findSpecialCaseTitleRender(content: string, file: string): TapEditAudit
   return issues;
 }
 
+/**
+ * Icons from @expo/vector-icons MUST carry a testID (rule 7b). An icon without
+ * a testID is the most common source of "I tapped the icon and it changed the
+ * row behind it" — the bridge has nothing to route the click to, so it falls
+ * back to the parent container.
+ */
+function findIconMissingTestIdIssues(content: string, file: string): TapEditAuditIssue[] {
+  const issues: TapEditAuditIssue[] = [];
+  const re = /<(Ionicons|MaterialIcons|MaterialCommunityIcons|Feather|AntDesign|Entypo|FontAwesome|Foundation|Octicons|SimpleLineIcons|Zocial)\b/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(content)) !== null) {
+    const parsed = parseOpeningTagAt(content, m.index);
+    if (!parsed) continue;
+    if (/testID\s*=/.test(parsed.tag)) continue;
+    issues.push({
+      file,
+      line: lineNumberAt(content, parsed.start),
+      kind: "icon-missing-testid",
+      snippet: parsed.tag.replace(/\s+/g, " ").trim().slice(0, 140),
+    });
+  }
+  return issues;
+}
+
+/**
+ * `color: "#fff"` or `backgroundColor: 'red'` hardcoded in a style object.
+ * Tap-to-edit mutates the `colors` object, so a literal here would not change
+ * when the user picks a new color — classic "I changed the color and nothing
+ * happened" mislabel. Replace with `colors.something` (or another token).
+ */
+function findRawColorLiteralIssues(content: string, file: string): TapEditAuditIssue[] {
+  const issues: TapEditAuditIssue[] = [];
+  const re = /\b(color|backgroundColor|borderColor|tintColor|fillColor|strokeColor)\s*:\s*["'](?:#[0-9a-fA-F]{3,8}|rgba?\([^)]*\)|hsla?\([^)]*\)|[a-zA-Z]+)["']/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(content)) !== null) {
+    const before = content.slice(Math.max(0, m.index - 200), m.index);
+    if (!/StyleSheet\.create\b|\bstyles\s*[:=]/.test(before)) continue;
+    issues.push({
+      file,
+      line: lineNumberAt(content, m.index),
+      kind: "raw-color-literal",
+      snippet: content
+        .slice(m.index, m.index + 80)
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 140),
+    });
+  }
+  return issues;
+}
+
 /** Scan one file's source (unit tests + live audit). */
 export function auditFileContent(content: string, file: string): TapEditAuditIssue[] {
   if (!isAuditableFile(file)) return [];
@@ -316,6 +370,8 @@ export function auditFileContent(content: string, file: string): TapEditAuditIss
     ...findSplitTitleIssues(content, file),
     ...findDayDisplayHackIssues(content, file),
     ...findSpecialCaseTitleRender(content, file),
+    ...findIconMissingTestIdIssues(content, file),
+    ...findRawColorLiteralIssues(content, file),
   ];
 }
 
@@ -342,6 +398,8 @@ const KIND_LABELS: Record<TapEditAuditIssueKind, string> = {
   "day-display-hack": "day display override ternary",
   "special-case-title-render": "special-case renderTitle()",
   "rogue-tab-route": "screen in app/(tabs)/ but not Home/Settings — use app/(stack)/",
+  "icon-missing-testid": "icon without testID (chevrons, close buttons etc.)",
+  "raw-color-literal": "hardcoded color in StyleSheet — tap-edit won't change it",
 };
 
 /** Human + agent readable report (capped). */
