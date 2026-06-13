@@ -203,13 +203,14 @@ export function attemptTapEditPatch(
       c.type === "fontWeight" ||
       c.type === "fontFamily" ||
       c.type === "removeIcon" ||
-      (c.type === "text" && c.oldValue),
+      c.type === "text",
   );
   if (!hasWork) return { ok: false };
 
   const onlyBackground = parsed.changes.every((c) => c.type === "background");
   const hasAnchor = parsed.changes.some((c) => c.anchorText);
   const hasTextReplace = parsed.changes.some((c) => c.type === "text" && c.oldValue);
+  const hasTextSet = parsed.changes.some((c) => c.type === "text" && !c.oldValue);
   const hasIconRemoval = parsed.changes.some((c) => c.type === "removeIcon");
   const effectiveTestId = resolveEffectiveTestId(parsed, sources);
   if (!effectiveTestId && !hasAnchor && !hasTextReplace && !hasIconRemoval && !onlyBackground) {
@@ -226,7 +227,7 @@ export function attemptTapEditPatch(
     effectiveTestId || parsed.testId,
     parsed.changes,
   );
-  if (candidates.length === 0 && (hasTextReplace || onlyBackground)) {
+  if (candidates.length === 0 && (hasTextReplace || hasTextSet || onlyBackground)) {
     candidates = [...sources.keys()].filter(isEditableSourceFile);
   }
 
@@ -1261,6 +1262,7 @@ function patchTapEditInFile(
 
     if (change.type === "text") {
       if (!tag) return null;
+      // Path 1: literal text in JSX (e.g. <Text>Old Name</Text>).
       const withText = patchTextContent(content, tag, change.value);
       if (withText) {
         content = withText;
@@ -1268,8 +1270,25 @@ function patchTapEditInFile(
         if (!tag) return null;
         opening = tag.tag;
         touched = true;
+        continue;
       }
-      continue;
+      // Path 2: data-driven text in JSX (e.g. <Text>{UI_STRINGS.tagline}</Text>
+      // or <Text>{habit.name}</Text>). Locate the source of the string and
+      // rewrite its literal there.
+      const withExpression = patchTextByExpression(content, tag, change.value, testId);
+      if (withExpression && withExpression !== content) {
+        content = withExpression;
+        tag = testId ? findOpeningTagAtTestId(content, testId) : null;
+        if (!tag) return null;
+        opening = tag.tag;
+        touched = true;
+        continue;
+      }
+      // Path 3: element renders inside a shared component (AppButton, Card…)
+      // and the actual string lives in a property passed via children/title.
+      // patchComponentPassthroughInSources handles that case for a different
+      // change shape, so we simply return null here.
+      return null;
     }
 
     if (change.type === "background") {
@@ -1951,6 +1970,45 @@ function findTemplateTestIdElement(
       const idx = content.indexOf(marker, from);
       if (idx === -1) break;
       from = idx + marker.length;
+      const tag = walkBackToOpeningTag(content, idx);
+      if (tag?.tag.includes("testID")) return tag;
+    }
+  }
+  return null;
+}
+
+/**
+ * Find the source location of a testID template that, when populated, would
+ * produce the given runtime testId. Unlike `findTemplateTestIdElement`, this
+ * does not assume the runtime id is built from a single prefix + suffix —
+ * the runtime id may itself contain hyphens, in which case the
+ * prefix/suffix split fails. Instead we look at every `testID={\`...\`}`
+ * in the source and try to match the static parts against the runtime.
+ */
+function findRuntimeTestIdByTemplate(
+  content: string,
+  runtimeTestId: string,
+): { start: number; end: number; tag: string } | null {
+  const templateRe = /testID=\{`([^`]*)`\}/g;
+  let m: RegExpExecArray | null;
+  while ((m = templateRe.exec(content)) !== null) {
+    const tmpl = m[1];
+    // Build a regex from the template with one capture group for each ${...}.
+    const subRe = /(\$\{[^}]+\})|([^$`]+|\$|`)/g;
+    const parts: { literal: string; capture: boolean }[] = [];
+    let sm: RegExpExecArray | null;
+    while ((sm = subRe.exec(tmpl)) !== null) {
+      if (sm[1]) parts.push({ literal: "", capture: true });
+      else if (sm[2]) parts.push({ literal: sm[2], capture: false });
+    }
+    const composed: string[] = [];
+    for (const p of parts) {
+      if (p.capture) composed.push("(.+?)");
+      else composed.push(p.literal.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    }
+    const re = new RegExp("^" + composed.join("") + "$");
+    if (re.test(runtimeTestId)) {
+      const idx = m.index;
       const tag = walkBackToOpeningTag(content, idx);
       if (tag?.tag.includes("testID")) return tag;
     }
@@ -3029,9 +3087,17 @@ function findOpeningTagAtTestId(
     if (tag) return tag;
   }
 
-  // Runtime IDs from templates like `week-day-${day}` → week-day-Tue
-  const templateEl = findTemplateTestIdElement(content, testId);
+  // Fallback: try to match the runtime testID against any testID template
+  // literal in the source. Handles cases like
+  //   testID={`home-habit-${habit.id}-name`} → home-habit-habit-pushups-name
+  // where the existing prefix-suffix split can't recover the static prefix
+  // (because the runtime id itself contains a hyphen).
+  const templateEl = findRuntimeTestIdByTemplate(content, testId);
   if (templateEl) return templateEl;
+
+  // Runtime IDs from templates like `week-day-${day}` → week-day-Tue
+  const templateEl2 = findTemplateTestIdElement(content, testId);
+  if (templateEl2) return templateEl2;
 
   const listItemEl = findListItemTemplateElement(content, testId);
   if (listItemEl) return listItemEl;
@@ -3209,6 +3275,364 @@ function patchTextContent(content: string, tag: TagSpan, newText: string): strin
   if (inner.includes("{")) return null;
 
   return content.slice(0, tag.end) + newText + content.slice(close.index);
+}
+
+/**
+ * When the JSX body of a tapped element is `{EXPR}` (e.g. `{UI_STRINGS.tagline}`
+ * or `{habit.name}`) we cannot just replace the body. Instead, we locate the
+ * *source of the string* and patch the literal there. This handles the common
+ * M3-build pattern where every label sits in a typed `UI_STRINGS` constant or
+ * a seed `habits` array.
+ *
+ * Returns the updated content if a literal was found and rewritten, else null.
+ */
+function patchTextByExpression(
+  content: string,
+  tag: TagSpan,
+  newText: string,
+  runtimeTestId: string | null,
+): string | null {
+  const opening = content.slice(tag.start, tag.end);
+  if (opening.trimEnd().endsWith("/>")) return null;
+
+  const tagName = opening.match(/^<(\w+)/)?.[1];
+  if (!tagName) return null;
+
+  const closeRe = new RegExp(`</${tagName}>`, "g");
+  closeRe.lastIndex = tag.end;
+  const close = closeRe.exec(content);
+  if (!close) return null;
+
+  const inner = content.slice(tag.end, close.index).trim();
+  // Must be a single expression of the form `{EXPR}`.
+  const exprMatch = inner.match(/^\{([\s\S]+)\}$/);
+  if (!exprMatch) return null;
+  const expr = exprMatch[1].trim();
+  if (expr.includes("{")) return null; // nested expressions, not handled
+
+  // Strategy A: CONSTANT.FIELD (e.g. UI_STRINGS.tagline, LABELS.heroTitle).
+  // The body looks like `IDENT.field` and IDENT is a top-level const in this
+  // file. We rewrite the property's literal value.
+  const dottedMatch = expr.match(/^([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)$/);
+  if (dottedMatch) {
+    const [, ident, field] = dottedMatch;
+
+    // A.1) Local constant in this file (UI_STRINGS, LABELS, labels, etc.)
+    const localConst = patchLocalConstantString(content, ident, field, newText);
+    if (localConst) return localConst;
+
+    // A.2) Local data array indexed by id (habit.name, s.tagline, etc.).
+    // The runtime testID contains a known id segment that we extract.
+    if (runtimeTestId) {
+      const idSegment = extractIdFromTestId(content, runtimeTestId);
+      if (idSegment) {
+        // First, try the ident as-is (works when the iterator shares the
+        // name of the array: `array.map((array) => ...)`).
+        const direct = patchLocalDataField(content, ident, field, idSegment, newText);
+        if (direct) return direct;
+        // Then, try common variations. The most common pattern is
+        // `const habits = [...]; habits.map((habit) => ...)` where the
+        // iterator (`habit`) differs from the array (`habits`).
+        const candidates: string[] = [];
+        if (ident.endsWith("s")) candidates.push(ident.slice(0, -1));
+        else candidates.push(ident + "s");
+        for (const candidate of candidates) {
+          const r = patchLocalDataField(content, candidate, field, idSegment, newText);
+          if (r) return r;
+        }
+      }
+    }
+  }
+
+  // Strategy B: bare IDENT (e.g. just `{tagline}` shorthand) - we don't yet
+  // resolve these to local data arrays; the JSX would have to be a destructure
+  // pattern which is rare in tappable UI.
+  return null;
+}
+
+/**
+ * Patch a string property of a local constant object.
+ * Recognises forms:
+ *   const UI_STRINGS = { tagline: "Stay sharp" };
+ *   export const UI_STRINGS: { tagline: string } = { tagline: "Stay sharp" };
+ *   const LABELS = { heroTitle: "Welcome", heroSubtitle: "Hi" };
+ * Also handles `as const`, multi-line objects, and trailing semicolons.
+ */
+function patchLocalConstantString(
+  content: string,
+  ident: string,
+  field: string,
+  newText: string,
+): string | null {
+  // Find the constant declaration: `const IDENT = { ... }` or `: T = { ... }`.
+  // The object literal may span many lines; we balance braces.
+  const declRe = new RegExp(
+    `(?:^|\\n)\\s*(?:export\\s+)?const\\s+${ident}\\b[^{=]*=\\s*\\{`,
+    "g",
+  );
+  const declMatch = declRe.exec(content);
+  if (!declMatch) return null;
+  const openBrace = declMatch.index + declMatch[0].length - 1;
+  // Walk forward, tracking brace depth, to find the matching close brace.
+  let depth = 1;
+  let i = openBrace + 1;
+  let inString: string | null = null;
+  let inLineComment = false;
+  let inBlockComment = false;
+  while (i < content.length && depth > 0) {
+    const ch = content[i];
+    if (inLineComment) {
+      if (ch === "\n") inLineComment = false;
+      i++;
+      continue;
+    }
+    if (inBlockComment) {
+      if (ch === "*" && content[i + 1] === "/") {
+        inBlockComment = false;
+        i += 2;
+        continue;
+      }
+      i++;
+      continue;
+    }
+    if (inString) {
+      if (ch === "\\") { i += 2; continue; }
+      if (ch === inString) inString = null;
+      i++;
+      continue;
+    }
+    if (ch === "/" && content[i + 1] === "/") { inLineComment = true; i += 2; continue; }
+    if (ch === "/" && content[i + 1] === "*") { inBlockComment = true; i += 2; continue; }
+    if (ch === '"' || ch === "'" || ch === "`") { inString = ch; i++; continue; }
+    if (ch === "{") depth++;
+    else if (ch === "}") depth--;
+    i++;
+  }
+  if (depth !== 0) return null;
+  const closeBrace = i - 1;
+  const objectSrc = content.slice(openBrace, closeBrace + 1);
+
+  // Find `field: "currentValue"` inside the object.
+  const fieldRe = new RegExp(
+    `(\\b${field}\\s*:\\s*)(["'\`])((?:\\\\.|(?!\\2).)*)\\2`,
+  );
+  const fieldMatch = fieldRe.exec(objectSrc);
+  if (!fieldMatch) return null;
+  const fullMatch = fieldMatch[0];
+  const prefix = fieldMatch[1];
+  const quote = fieldMatch[2];
+  const oldValue = fieldMatch[3];
+  // Skip if the field is a template literal with substitutions or if value
+  // contains JS expressions.
+  if (quote === "`" && oldValue.includes("${")) return null;
+
+  // JSON-escape the new text to keep the literal well-formed.
+  const escaped = newText
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"');
+
+  const replacement = `${prefix}${quote}${escaped}${quote}`;
+  const newObject = objectSrc.replace(fullMatch, replacement);
+  return content.slice(0, openBrace) + newObject + content.slice(closeBrace + 1);
+}
+
+/**
+ * Patch a field of an item inside a local data array, identified by id.
+ * Recognises forms:
+ *   const habits = [
+ *     { id: "habit-morning-run", name: "Morning Run" },
+ *     { id: "habit-pushups", name: "Pushups" },
+ *   ];
+ *   habits.find(h => h.id === "habit-morning-run") // doesn't change the array
+ *
+ * The testID template for habit names is typically:
+ *   testID={`home-habit-${habit.id}-name`}      → runtime: home-habit-habit-morning-run-name
+ *   testID={`${item.id}-name`}                  → runtime: item.id-name
+ *
+ * We only patch the *first* literal object whose `id` field matches the
+ * extracted id segment.
+ */
+function patchLocalDataField(
+  content: string,
+  ident: string,
+  field: string,
+  idSegment: string,
+  newText: string,
+): string | null {
+  // Look for an array literal: `const IDENT = [ { id: "X", name: "Y" }, ... ]`
+  // or a const whose value is an object map { id: { ... } }.
+  const arrayRe = new RegExp(
+    `(?:^|\\n)\\s*(?:export\\s+)?const\\s+${ident}\\b[^{=]*=\\s*\\[`,
+    "g",
+  );
+  const arrayMatch = arrayRe.exec(content);
+  if (!arrayMatch) return null;
+  const openBracket = arrayMatch.index + arrayMatch[0].length - 1;
+  const balanceEnd = findBalancedEnd(content, openBracket, "[", "]");
+  if (balanceEnd === -1) return null;
+  const arraySrc = content.slice(openBracket, balanceEnd + 1);
+
+  // Find the first object literal whose `id` field equals idSegment.
+  // We do a per-object scan because objects can span multiple lines.
+  const escapedId = idSegment.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  // Try both single and double-quoted ids.
+  const idRe = new RegExp(`\\bid\\s*:\\s*(["'\`])${escapedId}\\1`, "g");
+  let m: RegExpExecArray | null;
+  while ((m = idRe.exec(arraySrc)) !== null) {
+    // Walk back to find the start of the object literal `{`.
+    const objStart = findObjectStart(arraySrc, m.index);
+    if (objStart === -1) continue;
+    // Walk forward to the matching `}`.
+    const objEnd = findBalancedEnd(arraySrc, objStart, "{", "}");
+    if (objEnd === -1) continue;
+    const objSrc = arraySrc.slice(objStart, objEnd + 1);
+    // Inside this object, find `field: "value"`.
+    const fieldRe = new RegExp(
+      `(\\b${field}\\s*:\\s*)(["'\`])((?:\\\\.|(?!\\2).)*)\\2`,
+    );
+    const fieldMatch = fieldRe.exec(objSrc);
+    if (!fieldMatch) continue;
+    const fullMatch = fieldMatch[0];
+    const prefix = fieldMatch[1];
+    const quote = fieldMatch[2];
+    if (quote === "`" && fieldMatch[3].includes("${")) continue;
+
+    const escaped = newText.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    const newObj = objSrc.replace(fullMatch, `${prefix}${quote}${escaped}${quote}`);
+    const newArray = arraySrc.slice(0, objStart) + newObj + arraySrc.slice(objEnd + 1);
+    return content.slice(0, openBracket) + newArray + content.slice(balanceEnd + 1);
+  }
+  return null;
+}
+
+/** Find the index of the matching close bracket/brace, or -1. */
+function findBalancedEnd(content: string, openIdx: number, open: string, close: string): number {
+  let depth = 1;
+  let i = openIdx + 1;
+  let inString: string | null = null;
+  let inLineComment = false;
+  let inBlockComment = false;
+  while (i < content.length && depth > 0) {
+    const ch = content[i];
+    if (inLineComment) { if (ch === "\n") inLineComment = false; i++; continue; }
+    if (inBlockComment) {
+      if (ch === "*" && content[i + 1] === "/") { inBlockComment = false; i += 2; continue; }
+      i++; continue;
+    }
+    if (inString) {
+      if (ch === "\\") { i += 2; continue; }
+      if (ch === inString) inString = null;
+      i++; continue;
+    }
+    if (ch === "/" && content[i + 1] === "/") { inLineComment = true; i += 2; continue; }
+    if (ch === "/" && content[i + 1] === "*") { inBlockComment = true; i += 2; continue; }
+    if (ch === '"' || ch === "'" || ch === "`") { inString = ch; i++; continue; }
+    if (ch === open) depth++;
+    else if (ch === close) depth--;
+    i++;
+  }
+  if (depth !== 0) return -1;
+  return i - 1;
+}
+
+/** Find the index of the `{` that opens the object containing idx. */
+function findObjectStart(content: string, idx: number): number {
+  // Walk back, tracking depth of `{}`, ignoring those inside strings/comments.
+  let depth = 1; // we know we're inside an object whose id field is at idx
+  let i = idx - 1;
+  let inString: string | null = null;
+  let inLineComment = false;
+  let inBlockComment = false;
+  while (i >= 0) {
+    const ch = content[i];
+    if (inLineComment) {
+      if (ch === "\n") inLineComment = false;
+      i--; continue;
+    }
+    if (inBlockComment) {
+      if (ch === "/" && content[i - 1] === "*") inBlockComment = false;
+      i--; continue;
+    }
+    if (inString) {
+      if (ch === "\\") { i -= 2; continue; }
+      if (ch === inString) inString = null;
+      i--; continue;
+    }
+    // Reverse string detection: look for a quote preceded by an even number
+    // of backslashes.
+    if (ch === '"' || ch === "'" || ch === "`") {
+      let backslashes = 0;
+      for (let j = i - 1; j >= 0 && content[j] === "\\"; j--) backslashes++;
+      if (backslashes % 2 === 0) inString = ch;
+      i--; continue;
+    }
+    if (ch === "/" && content[i - 1] === "/") { inLineComment = true; i -= 2; continue; }
+    if (ch === "/" && content[i - 1] === "*") { inBlockComment = true; i -= 2; continue; }
+    if (ch === "}") { depth++; i--; continue; }
+    if (ch === "{") { depth--; if (depth === 0) return i; i--; continue; }
+    i--;
+  }
+  return -1;
+}
+
+/**
+ * Extract a likely item id from a runtime testID that came from a template
+ * literal like `home-habit-${habit.id}-name`. The strategy is to look for
+ * the testID template in the source so we know the static prefix, then
+ * everything between prefix and the last suffix is the id.
+ *
+ * For runtime testID `home-habit-habit-pushups-name` we want the leaf
+ * id `habit-pushups` to look up in the data array.
+ */
+function extractIdFromTestId(
+  content: string,
+  runtimeTestId: string | null,
+): string | null {
+  if (!runtimeTestId) return null;
+  // Find the testID template literal in the source. The static portion is
+  // everything outside `${...}` and the dynamic portion is whatever the
+  // runtime substituted. We split the runtime testID using the same static
+  // anchors to recover the dynamic value.
+  const templateRe = /testID=\{`([^`]*)\`\}/g;
+  let m: RegExpExecArray | null;
+  while ((m = templateRe.exec(content)) !== null) {
+    const tmpl = m[1];
+    // Build a regex from the template with one capture group for each ${...}.
+    const subRe = /(\$\{[^}]+\})|([^$`]+|\$|`)/g;
+    const parts: { literal: string; capture: boolean }[] = [];
+    let sm: RegExpExecArray | null;
+    while ((sm = subRe.exec(tmpl)) !== null) {
+      if (sm[1]) parts.push({ literal: "", capture: true });
+      else if (sm[2]) parts.push({ literal: sm[2], capture: false });
+    }
+    // Compose: ^literal(capture)literal(capture)literal$ with capture groups.
+    const composed: string[] = [];
+    const captureIdxs: number[] = [];
+    for (const p of parts) {
+      if (p.capture) {
+        captureIdxs.push(composed.length);
+        composed.push("(.+?)");
+      } else {
+        composed.push(p.literal.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+      }
+    }
+    const re = new RegExp("^" + composed.join("") + "$");
+    const match = runtimeTestId.match(re);
+    if (match) {
+      // The dynamic value is the capture group corresponding to the last
+      // ${...} in the template (typically the only one).
+      const captured = match[captureIdxs[captureIdxs.length - 1]];
+      if (captured) return captured;
+    }
+  }
+  // Fallback: strip a known suffix.
+  const suffixes = ["-name", "-row", "-card", "-label", "-text", "-title", "-subtitle", "-header"];
+  for (const s of suffixes) {
+    if (runtimeTestId.endsWith(s)) {
+      return runtimeTestId.slice(0, -s.length);
+    }
+  }
+  return null;
 }
 
 interface TagSpan {

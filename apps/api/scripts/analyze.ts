@@ -150,7 +150,23 @@ function runtimeErrors(buildLog: string): [string, number][] {
 async function main() {
   const t0 = Date.now();
   log("logging in as e2e user");
-  const email = process.env.ANALYZE_EMAIL ?? "e2e-1781355546556@appable.dev";
+  // The bench runs e2e.mjs which creates its own user. If ANALYZE_EMAIL is set,
+  // use it. Otherwise look up the most recent e2e user from the DB.
+  let email = process.env.ANALYZE_EMAIL;
+  if (!email) {
+    const { getDb } = await import("@appable/db");
+    const db = getDb();
+    const recent = await db.user.findFirst({
+      where: { email: { startsWith: "e2e-" } },
+      orderBy: { createdAt: "desc" },
+    });
+    await db.$disconnect();
+    if (!recent) {
+      console.error("no e2e user found; set ANALYZE_EMAIL");
+      process.exit(2);
+    }
+    email = recent.email;
+  }
   const password = process.env.ANALYZE_PASSWORD ?? "secret123";
   const auth = await api("/auth/register", {
     method: "POST",
@@ -201,14 +217,25 @@ async function main() {
   let bundleBytes = 0;
   let bundleStatus = "?";
   if (webUrl) {
-    try {
-      const url = webUrl.replace(/\/$/, "") + "/index.bundle?platform=web&dev=true";
-      const res = await fetch(url);
-      bundleStatus = String(res.status);
-      const buf = await res.arrayBuffer();
-      bundleBytes = buf.byteLength;
-    } catch (e) {
-      bundleStatus = `err:${(e as Error).message}`;
+    // Try the real entry bundle path first (matches the e2e), then index.bundle.
+    const candidates = [
+      `${webUrl.replace(/\/$/, "")}/node_modules/expo-router/entry.bundle?platform=web&dev=true`,
+      `${webUrl.replace(/\/$/, "")}/index.bundle?platform=web&dev=true`,
+    ];
+    for (const url of candidates) {
+      try {
+        const res = await fetch(url);
+        bundleStatus = String(res.status);
+        if (res.ok) {
+          const buf = await res.arrayBuffer();
+          if (buf.byteLength > 100_000) {
+            bundleBytes = buf.byteLength;
+            break;
+          }
+        }
+      } catch (e) {
+        bundleStatus = `err:${(e as Error).message}`;
+      }
     }
   }
 
