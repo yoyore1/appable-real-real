@@ -142,4 +142,19 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
     await stopProject(project.id);
     return { ok: true };
   });
+
+  /** Build-event log for the analyzer harness. Returns the last 1000 events. */
+  app.get<{ Params: { id: string } }>("/projects/:id/build-log", async (req, reply) => {
+    const db = getDb();
+    const project = await db.project.findUnique({ where: { id: req.params.id } });
+    if (!project || project.userId !== req.user.userId) {
+      return reply.code(404).send({ error: "Project not found" });
+    }
+    const events = await db.buildEvent.findMany({
+      where: { projectId: req.params.id },
+      orderBy: { createdAt: "asc" },
+      take: 1000,
+    });
+    return { events };
+  });
 }
