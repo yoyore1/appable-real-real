@@ -42,22 +42,58 @@ ${PLATFORM_AGENT_RULES}
    save on every change. Works on web (localStorage) with the same code paths.
 7. Style with StyleSheet.create + src/theme/tokens.ts. FIRST build step on tokens:
    call applyBrandPrimary(spec.vibe.primaryColor). iOS system font for functional UI.
-7b. TAP-TO-EDIT CONTRACT — hard gate (automated hygiene runs AFTER design polish):
+7b. TAP-TO-EDIT CONTRACT — hard gate (automated hygiene runs AFTER design polish).
+   Full contract: apps/api/docs/tap-to-edit-contract.md. The audit will reject
+   the build if any rule below is violated.
+
+   TESTID ROLES (every testID is one of these):
+   - card-box: <screen>-<thing>, e.g. "home-stat-total", "home-add-habit",
+     "settings-notif-row", "home-empty", "home-loading", "home-error".
+     The whole card gets a background edit when the user taps anywhere inside.
+   - card-data-field: <card>-<field> with suffix -value, -label, -name, -text,
+     -desc, -message, -header, -icon, -chevron, -tagline, -built, -version,
+     -toggle, -input. e.g. "home-stat-total-value", "home-view-all-text",
+     "add-habit-name-label". The bridge walks up to the parent card for
+     boxTestId so background edits land on the card.
+   - list-item-row (templated, 4+ segments): <list>-${"$"}{id}-row and
+     <list>-${"$"}{id}-<field>. e.g. "home-habit-${"$"}{habit.id}-row" and
+     "home-habit-${"$"}{habit.id}-name".
+   - screen-shell: <screen>-screen, e.g. "home-screen". Never tappable.
+   - row-wrapper: <screen>-<list-or-section>, e.g. "home-stats",
+     "home-quick-list", "home-quick-title", "add-habit-name-group". Not a card.
+   - icon: <parent>-icon, <parent>-chevron, <parent>-close.
+
+   MANDATORY:
    - Every user-visible Text gets its own testID — never rely on a parent
      ScrollView/screen testID alone. Split combined copy into sibling Text
      nodes (title / subtitle / price / button label each separate).
    - Icons (@expo/vector-icons ONLY — never emoji) live in their own sibling
-     element with a testID — never icon + label in one Text node.
+     element with a testID — never icon + label in one Text node. Every
+     <Ionicons / MaterialIcons / Feather / etc.> MUST have a testID prop
+     (the audit will reject the build otherwise).
    - Icon + label pairs: wrap in Row or View flexDirection: 'row', alignItems: 'center'.
    - ANY .map() row: testID on the ROW container AND on each inner Text, e.g.
-     testID={\`recipe-\${recipe.id}\`} and testID={\`recipe-\${recipe.id}-title\`}.
+     testID={\`recipe-\${recipe.id}-row\`} and testID={\`recipe-\${recipe.id}-title\`}.
+     The row testID MUST end in -row, -card, or -item.
    - Shared card/row components: accept stable id prop; derive testIDs on Pressable AND Text.
    - Prop-driven labels ({title}, {name}): Text still needs testID tied to item id.
      User-visible strings live in DATA (storage.ts, tabs arrays) — UI renders {item.title}.
-   - Colors/backgrounds: inline override or dedicated style on THAT node.
+   - Colors/backgrounds: use the colors token (colors.something), NEVER a raw
+     hex/rgb/named string inside StyleSheet.create({...}). The audit will
+     reject the build for any color: "#fff" / backgroundColor: "red" / etc.
    - NEVER split one title across multiple Text nodes to color part of a word.
    - Card/row Pressable wrappers for background color edits need testID on the container.
    - Never touch appable-bridge.js or platform layout files (app/_layout.tsx, tab _layout).
+
+   FORBIDDEN (audit will reject the build):
+   - <Ionicons /> / <MaterialIcons /> etc. without a testID prop.
+   - Raw hex/rgb/named colors in StyleSheet.create({...}) — use colors tokens.
+   - <Text> in app/(tabs)/, app/(stack)/, src/components/, src/screens/
+     without a testID.
+   - <Pressable> inside .map() whose testID doesn't end in -row/-card/-item.
+   - Hardcoded user copy in JSX (use src/lib/storage.ts or a data array).
+   - day === 'Mon' ? "Monday" : day or title.split() fragments.
+   - Screen route file in app/(tabs)/ other than index.tsx / settings.tsx.
 8. Complete Rule 7 self-review BEFORE calling read_build_logs or saying BUILD COMPLETE.
 9. After writing the app, call read_build_logs to verify bundle + preview. Fix every error.
 10. When logs are clean and Rule 7 passes, reply with plain-text summary starting with "BUILD COMPLETE:".
@@ -157,19 +193,42 @@ problems found in the audit — so every label the customer taps SAVES to code.
 Metro is ALREADY running — do not start expo again. SMALLEST edits only.
 
 ## Fix every audit issue using rule 7b
-- Missing testID: add kebab-case testID on each user-visible Text and on mapped
-  row Pressable/TouchableOpacity (e.g. testID={\`home-habit-\${habit.id}-name\`} for
-  {habit.name}, testID={\`recipe-title-\${recipe.id}\`} for {recipe.title}).
-- Split title / renderTitle() / title.split(): one Text with {item.title} or
-  literal; put strings in src/lib/storage.ts (or tabs array), not JSX fragments.
-- day === 'Mon' ? "Monday" : day (day-display-hack): replace with plain {day};
-  day names live in the days array in the parent screen, not per-card ternaries.
-- Icon + label: flexDirection row (beside), separate Text nodes with testIDs.
-- Recipe/tab renames: title/label in defaultData or tabs array, UI shows {title}.
-- Never split one word across Text nodes for partial color.
-- Card/row Pressable for background edits: testID={\`{prefix}-\${item.id}-row\`} (or -card).
-- Never touch appable-bridge.js or platform layout files (app/_layout.tsx, tab _layout).
-- Do not change unrelated styling, navigation, or business logic.
+Full contract: apps/api/docs/tap-to-edit-contract.md. The audit will keep
+failing the build until every issue below is fixed. SMALLEST edits only.
+
+- icon-missing-testid: every <Ionicons / MaterialIcons / Feather / AntDesign /
+  Entypo / FontAwesome / MaterialCommunityIcons / Foundation / Octicons /
+  SimpleLineIcons / Zocial> MUST have a testID prop. Use the parent's
+  testID with -icon, -chevron, or -close suffix (e.g. <Ionicons
+  testID="home-view-all-chevron" name="chevron-forward" size={20} ... />).
+- raw-color-literal: any color/backgroundColor/borderColor/tintColor/fillColor/
+  strokeColor set to a hex (#fff), rgb (rgba(0,0,0,0)), or named string
+  ("red", "white") inside StyleSheet.create({...}) must be replaced with a
+  token reference (colors.primary, colors.text, colors.surface, etc.). The
+  tap-to-edit patcher mutates the colors token, not raw literals.
+- text-missing-testid: every user-visible <Text> in app/(tabs)/, app/(stack)/,
+  src/components/, or src/screens/ must have a testID. Add kebab-case testID
+  tied to the screen name (e.g. "home-stat-total-label",
+  "add-habit-name-label").
+- pressable-missing-testid: <Pressable> / <TouchableOpacity> inside .map(...)
+  needs testID on the row container AND a -row/-card/-item suffix
+  (e.g. testID={\`home-habit-\${habit.id}-row\`}).
+- prop-text-bad-testid: a Text showing {item.name} must end with -name
+  (or -title, -label, -desc). e.g. <Text testID={\`home-habit-\${habit.id}-name\`}
+  style={...}>{habit.name}</Text>.
+- hardcoded-user-text: any user-facing string of 10+ chars in a Text with a
+  testID is wrong; move it to src/lib/storage.ts or a data array and render
+  as {item.field}.
+- title-split-across-text: title.split(...).map(...) with multiple <Text>
+  nodes — replace with one <Text testID="...">{title}</Text>.
+- day-display-hack: day === 'Mon' ? "Monday" : day — replace with the days
+  array (parent screen maps id → label).
+- special-case-title-render: renderTitle() helpers — inline the rendering
+  with one Text per field.
+- rogue-tab-route: any file in app/(tabs)/ other than index.tsx / settings.tsx
+  must move to app/(stack)/.
+
+Do not change unrelated styling, navigation, or business logic.
 
 Read affected files with read_file, write complete files with write_file.
 Call read_build_logs when done. Reply starting with "FIX COMPLETE:".
