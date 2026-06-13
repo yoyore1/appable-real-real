@@ -1,25 +1,25 @@
 {
   "summary": {
     "projectId": "cmqasb8hz0002tlgcam7oxt4v",
-    "totalIds": 91,
+    "totalIds": 94,
     "byRole": {
       "card-box": 25,
-      "card-data-field": 30,
+      "card-data-field": 33,
       "row-wrapper": 3,
       "unknown": 33
     },
     "byBuildUiCardDecision": {
-      "true": 55,
+      "true": 58,
       "false": 36
     },
     "textColor": {
-      "patched": 88,
-      "noPatch": 3,
+      "patched": 90,
+      "noPatch": 4,
       "syntaxErrors": 0
     },
     "backgroundColor": {
       "patched": 88,
-      "noPatch": 3,
+      "noPatch": 6,
       "syntaxErrors": 0
     }
   },
@@ -501,6 +501,22 @@
       }
     },
     {
+      "testId": "home-empty-icon",
+      "role": "card-data-field",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(tabs)/index.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": false,
+        "reason": "no-patch-produced"
+      }
+    },
+    {
       "testId": "home-error",
       "role": "card-box",
       "buildUi": {
@@ -753,6 +769,21 @@
         "ok": true,
         "file": "app/(tabs)/index.tsx",
         "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "home-view-all-chevron",
+      "role": "card-data-field",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": false,
+        "reason": "no-patch-produced"
+      },
+      "background-color": {
+        "ok": false,
+        "reason": "no-patch-produced"
       }
     },
     {
@@ -1091,6 +1122,22 @@
         "ok": true,
         "file": "app/(tabs)/settings.tsx",
         "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "settings-tagline-icon",
+      "role": "card-data-field",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(tabs)/settings.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": false,
+        "reason": "no-patch-produced"
       }
     },
     {
