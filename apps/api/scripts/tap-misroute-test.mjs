@@ -98,6 +98,23 @@ const cases = [
     must: /habit\.id === 'h1' && \{ color: '#0a84ff' \}/,
     mustNot: [/habit\.id === 'h2'/],
   },
+  {
+    // Regression for the "Custom component with nested JSX child prop" bug.
+    // <EmptyState testID="home-empty" icon={<Ionicons name="…" size={…} />} />
+    // has a `<` inside the testID-bearing tag's attributes, so a naive regex
+    // that uses `[^<]*?` between the tag name and the testID literal fails to
+    // capture the tag. The walker must look at the testID literal first and
+    // then walk back to the opening `<` of the component tag.
+    label: "EmptyState passthrough BG (component with nested JSX child prop)",
+    file: "app/(tabs)/index.tsx",
+    msg: `[Tap edit] In the app, find the element with testID "home-empty" and set the background color to ${BG}. Change only what was tapped.`,
+    must: /<View testID=\{testID\} style=\{\[styles\.wrap, \{ backgroundColor: '#34c759' \}\]/,
+    mustNot: [
+      // The EmptyState call site in index.tsx must NOT receive the bg.
+      /<EmptyState testID="home-empty"[^>]*backgroundColor/s,
+    ],
+    fileMustBe: "src/components/EmptyState.tsx",
+  },
 ];
 
 let failed = 0;

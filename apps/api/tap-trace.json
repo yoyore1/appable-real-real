@@ -1,0 +1,1569 @@
+{
+  "summary": {
+    "projectId": "cmqasb8hz0002tlgcam7oxt4v",
+    "totalIds": 91,
+    "byRole": {
+      "card-box": 25,
+      "card-data-field": 30,
+      "row-wrapper": 3,
+      "unknown": 33
+    },
+    "byBuildUiCardDecision": {
+      "true": 55,
+      "false": 36
+    },
+    "textColor": {
+      "patched": 88,
+      "noPatch": 3,
+      "syntaxErrors": 0
+    },
+    "backgroundColor": {
+      "patched": 88,
+      "noPatch": 3,
+      "syntaxErrors": 0
+    }
+  },
+  "rows": [
+    {
+      "testId": "add-habit-actions",
+      "role": "card-box",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(stack)/add-habit.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(stack)/add-habit.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "add-habit-cancel",
+      "role": "card-box",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(stack)/add-habit.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(stack)/add-habit.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "add-habit-cancel-label",
+      "role": "card-data-field",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(stack)/add-habit.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(stack)/add-habit.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "add-habit-desc-group",
+      "role": "row-wrapper",
+      "buildUi": {
+        "isCardBoxTestId": false
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(stack)/add-habit.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(stack)/add-habit.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "add-habit-desc-input",
+      "role": "card-data-field",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(stack)/add-habit.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(stack)/add-habit.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "add-habit-desc-label",
+      "role": "card-data-field",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(stack)/add-habit.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(stack)/add-habit.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "add-habit-loading",
+      "role": "card-box",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(stack)/add-habit.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(stack)/add-habit.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "add-habit-name-error",
+      "role": "card-box",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(stack)/add-habit.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(stack)/add-habit.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "add-habit-name-group",
+      "role": "row-wrapper",
+      "buildUi": {
+        "isCardBoxTestId": false
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(stack)/add-habit.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(stack)/add-habit.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "add-habit-name-input",
+      "role": "card-data-field",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(stack)/add-habit.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(stack)/add-habit.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "add-habit-name-label",
+      "role": "card-data-field",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(stack)/add-habit.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(stack)/add-habit.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "add-habit-save",
+      "role": "card-box",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(stack)/add-habit.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(stack)/add-habit.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "add-habit-save-label",
+      "role": "card-data-field",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(stack)/add-habit.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(stack)/add-habit.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "add-habit-tips",
+      "role": "card-box",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(stack)/add-habit.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(stack)/add-habit.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "add-habit-tips-1",
+      "role": "card-box",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(stack)/add-habit.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(stack)/add-habit.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "add-habit-tips-2",
+      "role": "card-box",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(stack)/add-habit.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(stack)/add-habit.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "add-habit-tips-3",
+      "role": "card-box",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(stack)/add-habit.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(stack)/add-habit.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "add-habit-tips-title",
+      "role": "row-wrapper",
+      "buildUi": {
+        "isCardBoxTestId": false
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(stack)/add-habit.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(stack)/add-habit.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "habits-empty",
+      "role": "card-box",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(stack)/habits.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "src/components/EmptyState.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "habits-error",
+      "role": "card-box",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(stack)/habits.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(stack)/habits.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "habits-footer",
+      "role": "unknown",
+      "buildUi": {
+        "isCardBoxTestId": false
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(stack)/habits.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(stack)/habits.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "habits-footer-hint",
+      "role": "unknown",
+      "buildUi": {
+        "isCardBoxTestId": false
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(stack)/habits.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(stack)/habits.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "habits-list",
+      "role": "unknown",
+      "buildUi": {
+        "isCardBoxTestId": false
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(stack)/habits.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "src/components/GroupedSection.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "habits-loading",
+      "role": "card-box",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(stack)/habits.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(stack)/habits.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "habits-summary",
+      "role": "unknown",
+      "buildUi": {
+        "isCardBoxTestId": false
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(stack)/habits.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(stack)/habits.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "habits-summary-text",
+      "role": "card-data-field",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(stack)/habits.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(stack)/habits.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "home-add-habit",
+      "role": "card-box",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(tabs)/index.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "src/components/AppButton.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "home-empty",
+      "role": "card-box",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(tabs)/index.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "src/components/EmptyState.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "home-error",
+      "role": "card-box",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(tabs)/index.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(tabs)/index.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "home-loading",
+      "role": "card-box",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(tabs)/index.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(tabs)/index.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "home-quick-list",
+      "role": "unknown",
+      "buildUi": {
+        "isCardBoxTestId": false
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(tabs)/index.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "src/components/GroupedSection.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "home-quick-title",
+      "role": "unknown",
+      "buildUi": {
+        "isCardBoxTestId": false
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(tabs)/index.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(tabs)/index.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "home-stat-best",
+      "role": "card-box",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(tabs)/index.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "src/components/Card.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "home-stat-best-label",
+      "role": "card-data-field",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(tabs)/index.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(tabs)/index.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "home-stat-best-value",
+      "role": "card-data-field",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(tabs)/index.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(tabs)/index.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "home-stat-today",
+      "role": "card-box",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(tabs)/index.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "src/components/Card.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "home-stat-today-label",
+      "role": "card-data-field",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(tabs)/index.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(tabs)/index.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "home-stat-today-value",
+      "role": "card-data-field",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(tabs)/index.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(tabs)/index.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "home-stat-total",
+      "role": "card-box",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(tabs)/index.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "src/components/Card.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "home-stat-total-label",
+      "role": "card-data-field",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(tabs)/index.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(tabs)/index.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "home-stat-total-value",
+      "role": "card-data-field",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(tabs)/index.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(tabs)/index.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "home-stats",
+      "role": "unknown",
+      "buildUi": {
+        "isCardBoxTestId": false
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(tabs)/index.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(tabs)/index.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "home-view-all",
+      "role": "card-box",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(tabs)/index.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(tabs)/index.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "home-view-all-text",
+      "role": "card-data-field",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(tabs)/index.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(tabs)/index.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "legal-content",
+      "role": "unknown",
+      "buildUi": {
+        "isCardBoxTestId": false
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(stack)/legal.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(stack)/legal.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "legal-scroll",
+      "role": "unknown",
+      "buildUi": {
+        "isCardBoxTestId": false
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(stack)/legal.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(stack)/legal.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "opt.testID",
+      "role": "unknown",
+      "buildUi": {
+        "isCardBoxTestId": false
+      },
+      "text-color": {
+        "ok": false,
+        "reason": "no-patch-produced"
+      },
+      "background-color": {
+        "ok": false,
+        "reason": "no-patch-produced"
+      }
+    },
+    {
+      "testId": "settings-about",
+      "role": "unknown",
+      "buildUi": {
+        "isCardBoxTestId": false
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(tabs)/settings.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "src/components/GroupedSection.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "settings-about-header",
+      "role": "card-data-field",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(tabs)/settings.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(tabs)/settings.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "settings-appearance",
+      "role": "unknown",
+      "buildUi": {
+        "isCardBoxTestId": false
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(tabs)/settings.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "src/components/GroupedSection.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "settings-built-text",
+      "role": "card-data-field",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(tabs)/settings.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(tabs)/settings.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "settings-built-with",
+      "role": "unknown",
+      "buildUi": {
+        "isCardBoxTestId": false
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(tabs)/settings.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(tabs)/settings.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "settings-error",
+      "role": "card-box",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(tabs)/settings.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(tabs)/settings.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "settings-legal",
+      "role": "unknown",
+      "buildUi": {
+        "isCardBoxTestId": false
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(tabs)/settings.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "src/components/GroupedSection.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "settings-legal-header",
+      "role": "card-data-field",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(tabs)/settings.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(tabs)/settings.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "settings-loading",
+      "role": "card-box",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(tabs)/settings.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(tabs)/settings.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "settings-notif-label",
+      "role": "card-data-field",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(tabs)/settings.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(tabs)/settings.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "settings-notif-row",
+      "role": "card-box",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(tabs)/settings.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(tabs)/settings.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "settings-notif-toggle",
+      "role": "card-data-field",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(tabs)/settings.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(tabs)/settings.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "settings-notifications",
+      "role": "unknown",
+      "buildUi": {
+        "isCardBoxTestId": false
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(tabs)/settings.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "src/components/GroupedSection.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "settings-privacy",
+      "role": "unknown",
+      "buildUi": {
+        "isCardBoxTestId": false
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(tabs)/settings.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "src/components/SettingsRow.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "settings-support",
+      "role": "unknown",
+      "buildUi": {
+        "isCardBoxTestId": false
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(tabs)/settings.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "src/components/SettingsRow.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "settings-tagline",
+      "role": "card-data-field",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(tabs)/settings.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(tabs)/settings.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "settings-tagline-text",
+      "role": "card-data-field",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(tabs)/settings.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(tabs)/settings.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "settings-terms",
+      "role": "unknown",
+      "buildUi": {
+        "isCardBoxTestId": false
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(tabs)/settings.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "src/components/SettingsRow.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "settings-theme",
+      "role": "unknown",
+      "buildUi": {
+        "isCardBoxTestId": false
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(tabs)/settings.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "src/components/SettingsRow.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "settings-theme-row",
+      "role": "card-box",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(tabs)/settings.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(tabs)/settings.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "settings-version",
+      "role": "card-data-field",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(tabs)/settings.tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "src/components/SettingsRow.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "streak-created",
+      "role": "unknown",
+      "buildUi": {
+        "isCardBoxTestId": false
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(stack)/streak/[id].tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(stack)/streak/[id].tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "streak-created-text",
+      "role": "card-data-field",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(stack)/streak/[id].tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(stack)/streak/[id].tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "streak-delete-btn",
+      "role": "unknown",
+      "buildUi": {
+        "isCardBoxTestId": false
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(stack)/streak/[id].tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(stack)/streak/[id].tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "streak-delete-label",
+      "role": "card-data-field",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(stack)/streak/[id].tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(stack)/streak/[id].tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "streak-desc-label",
+      "role": "card-data-field",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(stack)/streak/[id].tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(stack)/streak/[id].tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "streak-desc-section",
+      "role": "unknown",
+      "buildUi": {
+        "isCardBoxTestId": false
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(stack)/streak/[id].tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(stack)/streak/[id].tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "streak-desc-text",
+      "role": "card-data-field",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(stack)/streak/[id].tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(stack)/streak/[id].tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "streak-detail-back-btn",
+      "role": "unknown",
+      "buildUi": {
+        "isCardBoxTestId": false
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(stack)/streak/[id].tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(stack)/streak/[id].tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "streak-detail-loading",
+      "role": "card-box",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(stack)/streak/[id].tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(stack)/streak/[id].tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "streak-detail-not-found",
+      "role": "unknown",
+      "buildUi": {
+        "isCardBoxTestId": false
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(stack)/streak/[id].tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(stack)/streak/[id].tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "streak-detail-not-found-text",
+      "role": "card-data-field",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(stack)/streak/[id].tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(stack)/streak/[id].tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "streak-hero",
+      "role": "unknown",
+      "buildUi": {
+        "isCardBoxTestId": false
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(stack)/streak/[id].tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "src/components/Card.tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "streak-hero-count",
+      "role": "unknown",
+      "buildUi": {
+        "isCardBoxTestId": false
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(stack)/streak/[id].tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(stack)/streak/[id].tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "streak-hero-fire",
+      "role": "unknown",
+      "buildUi": {
+        "isCardBoxTestId": false
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(stack)/streak/[id].tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(stack)/streak/[id].tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "streak-hero-label",
+      "role": "card-data-field",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(stack)/streak/[id].tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(stack)/streak/[id].tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "streak-history",
+      "role": "unknown",
+      "buildUi": {
+        "isCardBoxTestId": false
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(stack)/streak/[id].tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(stack)/streak/[id].tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "streak-history-chart",
+      "role": "unknown",
+      "buildUi": {
+        "isCardBoxTestId": false
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(stack)/streak/[id].tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(stack)/streak/[id].tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "streak-history-label",
+      "role": "card-data-field",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(stack)/streak/[id].tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(stack)/streak/[id].tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "streak-progress-bar",
+      "role": "unknown",
+      "buildUi": {
+        "isCardBoxTestId": false
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(stack)/streak/[id].tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(stack)/streak/[id].tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "streak-progress-fill",
+      "role": "unknown",
+      "buildUi": {
+        "isCardBoxTestId": false
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(stack)/streak/[id].tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(stack)/streak/[id].tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "streak-progress-text",
+      "role": "card-data-field",
+      "buildUi": {
+        "isCardBoxTestId": true
+      },
+      "text-color": {
+        "ok": true,
+        "file": "app/(stack)/streak/[id].tsx",
+        "syntaxErrors": []
+      },
+      "background-color": {
+        "ok": true,
+        "file": "app/(stack)/streak/[id].tsx",
+        "syntaxErrors": []
+      }
+    },
+    {
+      "testId": "testID",
+      "role": "unknown",
+      "buildUi": {
+        "isCardBoxTestId": false
+      },
+      "text-color": {
+        "ok": false,
+        "reason": "no-patch-produced"
+      },
+      "background-color": {
+        "ok": false,
+        "reason": "no-patch-produced"
+      }
+    },
+    {
+      "testId": "testID ? ",
+      "role": "unknown",
+      "buildUi": {
+        "isCardBoxTestId": false
+      },
+      "text-color": {
+        "ok": false,
+        "reason": "no-patch-produced"
+      },
+      "background-color": {
+        "ok": false,
+        "reason": "no-patch-produced"
+      }
+    }
+  ]
+}
