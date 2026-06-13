@@ -218,6 +218,7 @@ function findPressableIssues(content: string, file: string): TapEditAuditIssue[]
 
     const hasRowSuffix =
       /-(row|card|item|pressable)\`/.test(parsed.tag) ||
+      /-(row|card|item|pressable)\}/.test(parsed.tag) ||
       /-(row|card|item|pressable)"/.test(parsed.tag);
     if (!hasRowSuffix) {
       issues.push({

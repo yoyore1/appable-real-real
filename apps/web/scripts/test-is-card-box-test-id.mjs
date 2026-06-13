@@ -38,6 +38,11 @@ const CARDS = [
   "settings-theme-row",
   "settings-notif-toggle",
   "settings-tagline-text",
+  // Quick-list rows must end in -row to be classified as cards (was a mislabel).
+  // The build UI sees the resolved value (the template literal is interpolated
+  // before postMessage crosses the iframe boundary).
+  "home-habit-abc-row",
+  "habits-habit-xyz-row",
 ];
 
 const NON_CARDS = [
@@ -53,6 +58,8 @@ const NON_CARDS = [
   "home-screen",
   "settings-screen",
   "add-habit-screen",
+  // Quick-list rows WITHOUT -row suffix are mislabeled (was a real bug):
+  "home-habit-abc",
 ];
 
 let failures = 0;
