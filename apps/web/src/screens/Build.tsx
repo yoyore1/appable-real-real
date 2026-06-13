@@ -462,11 +462,16 @@ export function Build({
   const previewStarting = starting || s.preview?.status === "starting";
   const building = status === "building";
   const previewReady = s.preview?.status === "ready" || Boolean(project?.preview?.webUrl);
-  /** Hide the empty template early in build; show live Metro once the bundle exists. */
+  /** Keep the phone empty while the agent is mid-build — only show the live
+   * preview once the build is complete. Showing the empty Expo template
+   * before the app is written was misleading: users saw half a project
+   * (e.g. a Settings tab without a Home screen) and assumed the build was
+   * broken. The build-progress overlay below is the source of truth
+   * during the build phase. */
   const showPreview =
     Boolean(webUrl) &&
-    (!building || previewReady) &&
-    (status === "running" || status === "sleeping" || building);
+    !building &&
+    (status === "running" || status === "sleeping");
   const buildProgress = useBuildProgress({
     active: building,
     agentStatus: s.agentStatus,

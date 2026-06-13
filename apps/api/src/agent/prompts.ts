@@ -84,6 +84,15 @@ ${PLATFORM_AGENT_RULES}
    - NEVER split one title across multiple Text nodes to color part of a word.
    - Card/row Pressable wrappers for background color edits need testID on the container.
    - Never touch appable-bridge.js or platform layout files (app/_layout.tsx, tab _layout).
+   - User-facing string collections (UI_STRINGS, LABELS, labels map, etc.) MUST
+     be exported as a typed const: `export const UI_STRINGS: { authTagline:
+     string; welcomeTitle: string; ... } = { ... }`. Adding `{item.field}`
+     in JSX without a corresponding key in a typed collection causes a runtime
+     `Cannot read properties of undefined (reading 'field')` crash — the
+     preview goes red, customers see a broken screen, and there is no test
+     that catches it. TypeScript's strict mode (set in tsconfig.json) will
+     error at build time if a key is missing, so always type your strings
+     and arrays of objects.
 
    FORBIDDEN (audit will reject the build):
    - <Ionicons /> / <MaterialIcons /> etc. without a testID prop.

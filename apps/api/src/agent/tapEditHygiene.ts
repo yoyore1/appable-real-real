@@ -100,7 +100,15 @@ export async function runTapEditHygienePass(
     await ctx.log("info", formatTapEditProbeReport(probeFailures));
   }
 
-  const issuesAfter = auditIssues.length + probeFailures.length;
+  // Save probe runs in both build and edit but only blocks on edit. At build
+  // time the agent has just shipped the app and the probe reports useful
+  // diagnostics, but a probe miss shouldn't kill a healthy build — the customer
+  // hasn't tried to tap-edit yet. The probe is the real gate for tap-edit
+  // (edit phase) where unsaveable labels actually break the customer flow.
+  const issuesAfter =
+    ctx.phase === "edit"
+      ? auditIssues.length + probeFailures.length
+      : auditIssues.length;
 
   ctx.status("checking", "Making sure your app still loads...");
   const verifyError = await verifyApp(ctx.projectId);
@@ -111,9 +119,18 @@ export async function runTapEditHygienePass(
   return { issuesBefore: before, issuesAfter, verifyError };
 }
 
-/** Build gate: static audit still reports unsaveable labels after fix passes. */
-export function tapEditAuditBlocked(result: { issuesAfter: number }): boolean {
-  return result.issuesAfter > 0;
+/** Build gate: static audit still reports unsaveable labels after fix passes.
+ *
+ * Currently disabled — the tap-edit audit + probe are observational and warn
+ * the agent / user, but they don't block the build. The agent is LLM-based
+ * and the heal pass is non-deterministic (sometimes fixes 31/33 issues,
+ * sometimes regresses and adds more). Killing the build when residual
+ * issues remain is a worse user experience than shipping a working app with
+ * known tap-edit limitations. Re-enable once the agent's heal pass can
+ * reliably drive the audit to zero.
+ */
+export function tapEditAuditBlocked(_result: { issuesAfter: number }): boolean {
+  return false;
 }
 
 /** Edit rollback: audit issues or preview verify failed after hygiene. */
