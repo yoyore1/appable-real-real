@@ -567,9 +567,19 @@ export async function listProjectFiles(projectId: string): Promise<string[]> {
 }
 
 function normalizeProjectPath(p: string): string {
-  const cleaned = p.replace(/\\/g, "/").replace(/^\/+/, "");
+  let cleaned = p.replace(/\\/g, "/").replace(/^\/+/, "");
   if (cleaned.includes("..") || cleaned.includes("'")) {
     throw new Error(`Unsafe path: ${p}`);
+  }
+  // Auto-correct the common agent mistake of writing `app/src/...` when they
+  // mean `src/...`. Inside the container `/app` is the project root, so
+  // `app/src/...` resolves to `/app/app/src/...` and breaks Metro imports.
+  if (cleaned.startsWith("app/src/")) {
+    cleaned = cleaned.slice(4); // src/...
+  }
+  // Reject already-double-nested paths that would create /app/app/...
+  if (cleaned.startsWith("app/app/")) {
+    throw new Error(`Invalid path: ${p}`);
   }
   return cleaned;
 }
