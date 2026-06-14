@@ -575,7 +575,7 @@ function normalizeProjectPath(p: string): string {
 }
 
 /** Tail of the container logs (Metro output) for the agent's eyes. */
-export async function getProjectLogs(projectId: string, tailLines = 120): Promise<string> {
+export async function getProjectLogs(projectId: string, tailLines = 300): Promise<string> {
   const container = await findContainer(projectId);
   if (!container) return "";
   const buf = (await container.logs({
@@ -651,10 +651,34 @@ const MIN_BUNDLE_BYTES = 8_000;
 
 function parseBundleErrorBody(body: string, status?: number): string {
   try {
-    const parsed = JSON.parse(body) as { type?: string; message?: string };
-    return `${parsed.type ?? "BundleError"}: ${parsed.message ?? body.slice(0, 2000)}`;
+    const parsed = JSON.parse(body) as {
+      type?: string;
+      message?: string;
+      errors?: Array<{
+        description?: string;
+        message?: string;
+        filename?: string;
+        lineNumber?: number;
+        column?: number;
+      }>;
+      stack?: string;
+    };
+    const lines: string[] = [
+      `BundleError${status ? ` (HTTP ${status})` : ""}: ${parsed.message ?? parsed.type ?? "unknown"}`,
+    ];
+    if (parsed.errors?.length) {
+      for (const err of parsed.errors) {
+        lines.push(
+          `- ${err.filename ?? "unknown file"}${err.lineNumber ? `:${err.lineNumber}` : ""}: ${err.description ?? err.message ?? "unknown error"}`,
+        );
+      }
+    }
+    if (parsed.stack) {
+      lines.push(`Stack: ${parsed.stack}`);
+    }
+    return lines.join("\n").slice(0, 8000);
   } catch {
-    return status ? `HTTP ${status}: ${body.slice(0, 2000)}` : body.slice(0, 2000);
+    return status ? `HTTP ${status}: ${body.slice(0, 4000)}` : body.slice(0, 4000);
   }
 }
 

@@ -96,10 +96,11 @@ export const agentTools: ChatTool[] = [
 ];
 
 const MAX_TOOL_RESULT_CHARS = 12_000;
+const MAX_BUILD_LOG_CHARS = 24_000;
 
-function clip(text: string): string {
-  if (text.length <= MAX_TOOL_RESULT_CHARS) return text;
-  return `${text.slice(0, MAX_TOOL_RESULT_CHARS)}\n...[truncated]`;
+function clip(text: string, limit = MAX_TOOL_RESULT_CHARS): string {
+  if (text.length <= limit) return text;
+  return `${text.slice(0, limit)}\n...[truncated]`;
 }
 
 /** Execute one tool call against the project container; returns the tool result string. */
@@ -157,14 +158,14 @@ export async function executeTool(
     case "read_build_logs": {
       // Force compile + preview smoke so errors actually surface.
       const verifyError = await verifyApp(projectId);
-      const logs = await getProjectLogs(projectId, 150);
+      const logs = await getProjectLogs(projectId, 300);
       const parts = [
         verifyError
           ? `VERIFY ERROR:\n${verifyError}`
           : "App verified — bundle compiles and preview loads.",
         logs ? `Recent logs:\n${logs}` : "(no logs)",
       ];
-      return clip(parts.join("\n\n"));
+      return clip(parts.join("\n\n"), MAX_BUILD_LOG_CHARS);
     }
     default:
       return `Unknown tool: ${name}`;
