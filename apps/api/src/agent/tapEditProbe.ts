@@ -8,7 +8,6 @@ import {
   probeTapEditRequest,
 } from "./tapEdit.js";
 import {
-  deriveRowTestIdFromLabel,
   expandTemplateTestId,
   parseDataRecords,
 } from "./tapEditDiscovery.js";
