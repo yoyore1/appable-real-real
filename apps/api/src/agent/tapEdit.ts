@@ -10,7 +10,6 @@ import {
   parseListItemTestContext,
   resolveListItemTestIdFromAnchor,
 } from "./tapEditDiscovery.js";
-
 type StyleProp = "color" | "backgroundColor" | "fontWeight" | "fontFamily";
 
 export interface TapEditChange {
@@ -213,6 +212,7 @@ export function attemptTapEditPatch(
   const hasTextSet = parsed.changes.some((c) => c.type === "text" && !c.oldValue);
   const hasIconRemoval = parsed.changes.some((c) => c.type === "removeIcon");
   const effectiveTestId = resolveEffectiveTestId(parsed, sources);
+
   if (!effectiveTestId && !hasAnchor && !hasTextReplace && !hasIconRemoval && !onlyBackground) {
     return { ok: false };
   }
@@ -520,15 +520,31 @@ function patchPassthroughElements(
   return touched ? updated : null;
 }
 
-/** Dry-run: would this tap-to-edit message patch source? Uses an in-memory file map. */
+/** Dry-run: would this tap-to-edit message apply? Uses an in-memory file map. */
 export function probeTapEditRequest(
   request: string,
   sources: Map<string, string>,
 ): { ok: true; file: string } | { ok: false } {
   const parsed = parseTapEditRequest(request);
   if (!parsed) return { ok: false };
+
+  // New architecture: any request targeting a registered testID is applied
+  // as a runtime override, no source patching required.
+  if (parsed.testId && hasEditableComponent(sources, parsed.testId)) {
+    return { ok: true, file: "runtime" };
+  }
+
   const result = attemptTapEditPatch(parsed, sources);
   return result.ok ? { ok: true, file: result.file } : { ok: false };
+}
+
+function hasEditableComponent(sources: Map<string, string>, testId: string): boolean {
+  const escaped = testId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(`<Editable(?:Text|Icon|Background)\\b[^>]*testID=["'\\{]?${escaped}["'\\}]?`, "g");
+  for (const content of sources.values()) {
+    if (pattern.test(content)) return true;
+  }
+  return false;
 }
 
 export async function loadTapEditSourceCache(projectId: string): Promise<Map<string, string>> {
@@ -546,6 +562,28 @@ export async function tryTapEditPatch(
   const parsed = parseTapEditRequest(request);
   if (!parsed) return { ok: false };
 
+  // New architecture: tap-to-edit is a runtime override, not a source patch.
+  // If the request names a specific element, emit the override instruction
+  // directly to the preview frame. The bridge looks up the registered
+  // EditableText/Icon/Background and applies it in ~16ms.
+  const runtimePatch = buildRuntimeTapEditPatch(parsed);
+  if (runtimePatch) {
+    emit(projectId, {
+      type: "tap_edit.apply",
+      testID: runtimePatch.testID,
+      patch: runtimePatch.patch,
+    });
+    emit(projectId, {
+      type: "build.event",
+      level: "info",
+      source: "system",
+      text: `tap-edit: applied runtime override for ${runtimePatch.testID}`,
+      timestamp: new Date().toISOString(),
+    });
+    return { ok: true, summary: tapEditSummary(parsed.changes), file: "runtime" };
+  }
+
+  // Legacy fallback for screen backgrounds and unscoped edits.
   const sources = await loadTapEditSourceCache(projectId);
   const screenBgChange = parsed.changes.find((c) => c.type === "background" && c.screen);
   if (screenBgChange) {
@@ -580,6 +618,25 @@ export async function tryTapEditPatch(
     timestamp: new Date().toISOString(),
   });
   return { ok: false };
+}
+
+function buildRuntimeTapEditPatch(
+  parsed: TapEditRequest,
+): { testID: string; patch: Record<string, string | number> } | null {
+  const testId = parsed.testId;
+  if (!testId) return null;
+
+  const patch: Record<string, string | number> = {};
+  for (const change of parsed.changes) {
+    if (change.type === "text") patch.text = change.value;
+    if (change.type === "color") patch.color = change.value;
+    if (change.type === "background") patch.backgroundColor = change.value;
+    if (change.type === "fontWeight") patch.fontWeight = change.value;
+    if (change.type === "fontFamily") patch.fontFamily = change.value;
+  }
+
+  if (Object.keys(patch).length === 0) return null;
+  return { testID: testId, patch };
 }
 
 function attemptPatchScreenBackgroundInSources(

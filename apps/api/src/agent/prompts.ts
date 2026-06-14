@@ -38,69 +38,60 @@ ${PLATFORM_AGENT_RULES}
    src/components/, src/lib/, src/theme/.
 5. Do NOT edit app/_layout.tsx, app/(tabs)/_layout.tsx, or app/(stack)/_layout.tsx —
    platform owns navigation shell.
+5b. IMPORT PATHS — before writing any import that crosses into src/, run
+   "find /app/app -type d" to see the actual directory layout, then count "../"
+   from the file you're writing TO /app/src/. Examples for the current layout:
+   - app/(tabs)/index.tsx           -> "../src/..."     (one ..)
+   - app/(stack)/recipes.tsx        -> "../src/..."     (one ..)
+   - app/(stack)/recipe/[id].tsx    -> "../../src/..."  (two ..)
+   - app/(stack)/recipe/[id]/edit.tsx -> "../../../src/..." (three ..)
+   If the file is missing or path depth is unclear, run "ls /app/app/(stack)/" first.
+   Metro will reject "../../src/..." from a depth-2 file and the build will
+   silently loop on heal rounds — get this right on the first write.
 6. PERSIST USER DATA via AsyncStorage + src/lib/storage.ts pattern: load on mount,
    save on every change. Works on web (localStorage) with the same code paths.
 7. Style with StyleSheet.create + src/theme/tokens.ts. FIRST build step on tokens:
    call applyBrandPrimary(spec.vibe.primaryColor). iOS system font for functional UI.
 7b. TAP-TO-EDIT CONTRACT — hard gate (automated hygiene runs AFTER design polish).
-   Full contract: apps/api/docs/tap-to-edit-contract.md. The audit will reject
-   the build if any rule below is violated.
+   Full contract: apps/api/docs/tap-to-edit-contract.md. This is an
+   ARCHITECTURAL contract, not a patcher: generated apps are editable by
+   construction. The audit will reject the build if any rule below is violated.
 
-   TESTID ROLES (every testID is one of these):
-   - card-box: <screen>-<thing>, e.g. "home-stat-total", "home-add-habit",
-     "settings-notif-row", "home-empty", "home-loading", "home-error".
-     The whole card gets a background edit when the user taps anywhere inside.
-   - card-data-field: <card>-<field> with suffix -value, -label, -name, -text,
-     -desc, -message, -header, -icon, -chevron, -tagline, -built, -version,
-     -toggle, -input. e.g. "home-stat-total-value", "home-view-all-text",
-     "add-habit-name-label". The bridge walks up to the parent card for
-     boxTestId so background edits land on the card.
-   - list-item-row (templated, 4+ segments): <list>-${"$"}{id}-row and
-     <list>-${"$"}{id}-<field>. e.g. "home-habit-${"$"}{habit.id}-row" and
-     "home-habit-${"$"}{habit.id}-name".
-   - screen-shell: <screen>-screen, e.g. "home-screen". Never tappable.
-   - row-wrapper: <screen>-<list-or-section>, e.g. "home-stats",
-     "home-quick-list", "home-quick-title", "add-habit-name-group". Not a card.
-   - icon: <parent>-icon, <parent>-chevron, <parent>-close.
+   EDITABLE COMPONENTS (already provided by the template in src/components/):
+   - <EditableText testID source defaultValue {...} /> replaces EVERY
+     user-visible <Text> in the app. source = { file, export, property? }.
+     Import: import { EditableText } from "../src/components/EditableText";
+   - <EditableIcon testID name size source defaultValue color /> replaces
+     EVERY raw <Ionicons />, <MaterialIcons />, <Feather />, etc.
+     Import: import { EditableIcon } from "../src/components/EditableIcon";
+   - <EditableBackground testID source defaultValue style /> wraps cards,
+     rows, headers, empty states, and any container whose background color
+     should be editable.
+     Import: import { EditableBackground } from "../src/components/EditableBackground";
+   - <TapEditProvider> is already in app/_layout.tsx. Do not touch it.
 
-   MANDATORY:
-   - Every user-visible Text gets its own testID — never rely on a parent
-     ScrollView/screen testID alone. Split combined copy into sibling Text
-     nodes (title / subtitle / price / button label each separate).
-   - Icons (@expo/vector-icons ONLY — never emoji) live in their own sibling
-     element with a testID — never icon + label in one Text node. Every
-     <Ionicons / MaterialIcons / Feather / etc.> MUST have a testID prop
-     (the audit will reject the build otherwise).
-   - Icon + label pairs: wrap in Row or View flexDirection: 'row', alignItems: 'center'.
-   - ANY .map() row: testID on the ROW container AND on each inner Text, e.g.
-     testID={\`recipe-\${recipe.id}-row\`} and testID={\`recipe-\${recipe.id}-title\`}.
-     The row testID MUST end in -row, -card, or -item.
-   - Shared card/row components: accept stable id prop; derive testIDs on Pressable AND Text.
-   - Prop-driven labels ({title}, {name}): Text still needs testID tied to item id.
-     User-visible strings live in DATA (storage.ts, tabs arrays) — UI renders {item.title}.
-   - Colors/backgrounds: use the colors token (colors.something), NEVER a raw
-     hex/rgb/named string inside StyleSheet.create({...}). The audit will
-     reject the build for any color: "#fff" / backgroundColor: "red" / etc.
-   - NEVER split one title across multiple Text nodes to color part of a word.
-   - Card/row Pressable wrappers for background color edits need testID on the container.
-   - Never touch appable-bridge.js or platform layout files (app/_layout.tsx, tab _layout).
-   - User-facing string collections (UI_STRINGS, LABELS, labels map, etc.) MUST
-     be exported as a typed const, e.g.
-     "export const UI_STRINGS: { authTagline: string; welcomeTitle: string } = { ... }".
-     Adding "{item.field}" in JSX without a corresponding key in a typed
-     collection causes a runtime "Cannot read properties of undefined
-     (reading 'field')" crash — the preview goes red, customers see a broken
-     screen, and there is no test that catches it. TypeScript's strict mode
-     (set in tsconfig.json) will error at build time if a key is missing, so
-     always type your strings and arrays of objects.
+   SOURCE-OF-TRUTH FILES (create these in every app):
+   - src/lib/strings.ts — typed const UI_STRINGS holding ALL user copy.
+   - src/theme/tokens.ts — colors object (already scaffolded). Add semantic
+     tokens when needed (e.g. colors.heroBackground) but never duplicate
+     existing tokens.
+   - src/lib/storage.ts — user data arrays rendered with {item.field}.
+
+   testID CONVENTION (one role per element):
+   - text:   <screen>-<thing> or <screen>-<thing>-<label>
+             e.g. "home-title", "home-stat-total-value", "settings-notif-row-label".
+   - icon:   <parent>-icon, <parent>-chevron, <parent>-close.
+   - background/card: <screen>-<thing> (container) or <screen>-<list>-<id>-row.
+   - screen-shell: <screen>-screen — never tappable.
+   - row-wrapper: <screen>-<list>, <screen>-<section> — structural only.
 
    FORBIDDEN (audit will reject the build):
-   - <Ionicons /> / <MaterialIcons /> etc. without a testID prop.
-   - Raw hex/rgb/named colors in StyleSheet.create({...}) — use colors tokens.
-   - <Text> in app/(tabs)/, app/(stack)/, src/components/, src/screens/
-     without a testID.
-   - <Pressable> inside .map() whose testID doesn't end in -row/-card/-item.
-   - Hardcoded user copy in JSX (use src/lib/storage.ts or a data array).
+   - Raw <Text> from react-native for user-visible copy. Use EditableText.
+   - Raw <Ionicons />, <MaterialIcons />, <Feather />, etc. Use EditableIcon.
+   - Containers with hardcoded backgroundColor that should be editable.
+   - Raw hex/rgb/named colors anywhere — use colors tokens.
+   - Hardcoded user copy in JSX — use UI_STRINGS or storage data.
+   - Any <Text> or icon without a testID.
    - day === 'Mon' ? "Monday" : day or title.split() fragments.
    - Screen route file in app/(tabs)/ other than index.tsx / settings.tsx.
 8. Complete Rule 7 self-review BEFORE calling read_build_logs or saying BUILD COMPLETE.

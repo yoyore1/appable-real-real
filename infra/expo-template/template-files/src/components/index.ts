@@ -14,3 +14,6 @@ export { ActionMenu } from "./ActionMenu";
 export type { ActionMenuOption } from "./ActionMenu";
 export { Blur } from "./Blur";
 export { AppIcon } from "./AppIcon";
+export { EditableText } from "./EditableText";
+export { EditableIcon } from "./EditableIcon";
+export { EditableBackground } from "./EditableBackground";

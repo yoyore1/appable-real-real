@@ -136,10 +136,11 @@ function collectProbeTargets(
 ): ProbeTarget[] {
   const targets: ProbeTarget[] = [];
   const seen = new Set<string>();
-  const re = /<Text\b([^>]*)>([\s\S]*?)<\/Text>/g;
-  let m: RegExpExecArray | null;
 
-  while ((m = re.exec(content)) !== null) {
+  // Legacy: raw <Text> elements.
+  const textRe = /<Text\b([^>]*)>([\s\S]*?)<\/Text>/g;
+  let m: RegExpExecArray | null;
+  while ((m = textRe.exec(content)) !== null) {
     const attrs = m[1] ?? "";
     const inner = (m[2] ?? "").trim();
     const line = lineNumberAt(content, m.index);
@@ -173,6 +174,34 @@ function collectProbeTargets(
         targets.push({ file, line, testId, text });
       }
     }
+  }
+
+  // New architecture: <EditableText testID=... defaultValue={{ text: "..." }} />.
+  const editableTextRe = /<EditableText\b([^>]*)defaultValue=\{\{[^}]*text:\s*["']([^"']+)["'][^}]*\}\}/g;
+  let em: RegExpExecArray | null;
+  while ((em = editableTextRe.exec(content)) !== null) {
+    const attrs = em[1] ?? "";
+    const text = em[2] ?? "";
+    const staticId = parseStaticTestId(attrs);
+    if (!staticId || isBroadContainerTestId(staticId)) continue;
+    if (!text || text.length < 2 || SKIP_PROBE_TEXT.has(text)) continue;
+    const key = `${staticId}\0${text}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    targets.push({ file, line: lineNumberAt(content, em.index), testId: staticId, text });
+  }
+
+  // New architecture: <EditableBackground testID=... /> (no text, but editable).
+  const editableBgRe = /<EditableBackground\b([^>]*)>/g;
+  let bm: RegExpExecArray | null;
+  while ((bm = editableBgRe.exec(content)) !== null) {
+    const attrs = bm[1] ?? "";
+    const staticId = parseStaticTestId(attrs);
+    if (!staticId || isBroadContainerTestId(staticId)) continue;
+    const key = `${staticId}\0__bg__`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    targets.push({ file, line: lineNumberAt(content, bm.index), testId: staticId, text: "" });
   }
 
   return targets;

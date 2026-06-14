@@ -8,6 +8,7 @@ import type {
   PreviewStatusEvent,
   ProjectStatus,
   ServerEvent,
+  TapEditApplyEvent,
 } from "@appable/shared";
 import { wsUrl } from "./api.js";
 
@@ -47,7 +48,14 @@ export interface ProjectSocketState {
   clearInterviewSuggestions: () => void;
 }
 
-export function useProjectSocket(projectId: string | null): ProjectSocketState {
+export interface ProjectSocketHandlers {
+  onTapEditApply?: (event: TapEditApplyEvent) => void;
+}
+
+export function useProjectSocket(
+  projectId: string | null,
+  handlers?: ProjectSocketHandlers,
+): ProjectSocketState {
   const wsRef = useRef<WebSocket | null>(null);
   const [connected, setConnected] = useState(false);
   const [projectStatus, setProjectStatus] = useState<ProjectStatus | null>(null);
@@ -174,6 +182,9 @@ export function useProjectSocket(projectId: string | null): ProjectSocketState {
           break;
         case "checkpoint.created":
           setCheckpointsVersion((n) => n + 1);
+          break;
+        case "tap_edit.apply":
+          handlers?.onTapEditApply?.(event);
           break;
         case "error":
           setBuildLog((log) => [

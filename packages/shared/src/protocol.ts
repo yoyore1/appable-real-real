@@ -62,6 +62,7 @@ export type ServerEvent =
   | SpecUpdatedEvent
   | ProjectStatusEvent
   | CheckpointCreatedEvent
+  | TapEditApplyEvent
   | ErrorEvent
   | PongEvent;
 
@@ -150,6 +151,20 @@ export interface CheckpointCreatedEvent {
   type: "checkpoint.created";
   checkpointId: string;
   label: string;
+}
+
+/** Runtime tap-to-edit override instruction sent to the preview frame. */
+export interface TapEditApplyEvent {
+  type: "tap_edit.apply";
+  testID: string;
+  patch: {
+    text?: string;
+    color?: string;
+    backgroundColor?: string;
+    fontSize?: number;
+    fontWeight?: string;
+    fontFamily?: string;
+  };
 }
 
 export interface ErrorEvent {

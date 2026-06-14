@@ -10,7 +10,11 @@ export type TapEditAuditIssueKind =
   | "hardcoded-user-text"
   | "rogue-tab-route"
   | "icon-missing-testid"
-  | "raw-color-literal";
+  | "raw-color-literal"
+  | "raw-text-in-jsx"
+  | "raw-icon-in-jsx"
+  | "missing-strings-file"
+  | "missing-tokens-file";
 
 export interface TapEditAuditIssue {
   file: string;
@@ -26,6 +30,14 @@ const AUDIT_GLOBS = [
   /^src\/lib\/.+\.(tsx|ts)$/,
   /^App\.tsx$/,
 ];
+
+const PLATFORM_COMPONENT_FILES = new Set([
+  "src/components/EditableText.tsx",
+  "src/components/EditableIcon.tsx",
+  "src/components/EditableBackground.tsx",
+  "src/lib/tapEdit.ts",
+  "src/components/index.ts",
+]);
 
 const TAB_BAR_ONLY = new Set(["index", "settings"]);
 
@@ -64,6 +76,8 @@ const PROP_FIELD_TESTID_SUFFIX: Record<string, string> = {
   label: "label",
   description: "desc",
 };
+
+const EDITABLE_TAGNAMES = new Set(["EditableText", "EditableIcon", "EditableBackground"]);
 
 const HARDCODED_TEXT_ALLOW = new Set([
   "Loading...",
@@ -139,7 +153,9 @@ function findHardcodedUserTextIssues(content: string, file: string): TapEditAudi
 }
 
 function isAuditableFile(path: string): boolean {
-  return AUDIT_GLOBS.some((re) => re.test(path.replace(/\\/g, "/")));
+  const norm = path.replace(/\\/g, "/");
+  if (PLATFORM_COMPONENT_FILES.has(norm)) return false;
+  return AUDIT_GLOBS.some((re) => re.test(norm));
 }
 
 function lineNumberAt(content: string, index: number): number {
@@ -192,6 +208,73 @@ function findTextIssues(content: string, file: string): TapEditAuditIssue[] {
     });
   }
   return issues;
+}
+
+/** In the editable-by-architecture contract, any user-visible <Text> must be wrapped in <EditableText>. */
+function findRawTextIssues(content: string, file: string): TapEditAuditIssue[] {
+  const issues: TapEditAuditIssue[] = [];
+  // Match <Text> that is NOT inside an EditableText wrapper. We approximate by looking for <Text ...> not preceded by <EditableText> in the same file.
+  const re = /<Text\b/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(content)) !== null) {
+    const parsed = parseOpeningTagAt(content, m.index);
+    if (!parsed) continue;
+    if (shouldSkipTextTag(parsed.tag)) continue;
+    issues.push({
+      file,
+      line: lineNumberAt(content, parsed.start),
+      kind: "raw-text-in-jsx",
+      snippet: parsed.tag.replace(/\s+/g, " ").trim().slice(0, 140),
+    });
+  }
+  return issues;
+}
+
+/** Raw vector icons must be wrapped in <EditableIcon>. */
+function findRawIconIssues(content: string, file: string): TapEditAuditIssue[] {
+  const issues: TapEditAuditIssue[] = [];
+  const re = /<(Ionicons|MaterialIcons|MaterialCommunityIcons|Feather|AntDesign|Entypo|FontAwesome|Foundation|Octicons|SimpleLineIcons|Zocial)\b/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(content)) !== null) {
+    const parsed = parseOpeningTagAt(content, m.index);
+    if (!parsed) continue;
+    issues.push({
+      file,
+      line: lineNumberAt(content, parsed.start),
+      kind: "raw-icon-in-jsx",
+      snippet: parsed.tag.replace(/\s+/g, " ").trim().slice(0, 140),
+    });
+  }
+  return issues;
+}
+
+/** Require typed UI_STRINGS in src/lib/strings.ts. */
+function findStringsFileIssues(content: string, file: string): TapEditAuditIssue[] {
+  if (!/src\/lib\/strings\.ts$/.test(file.replace(/\\/g, "/"))) return [];
+  if (!/export const UI_STRINGS\s*[:<]/.test(content)) {
+    return [{
+      file,
+      line: 1,
+      kind: "missing-strings-file",
+      snippet: "src/lib/strings.ts must export typed UI_STRINGS",
+    }];
+  }
+  return [];
+}
+
+/** Require colors token file in src/lib/tokens.ts or src/theme/tokens.ts. */
+function findTokensFileIssues(content: string, file: string): TapEditAuditIssue[] {
+  const norm = file.replace(/\\/g, "/");
+  if (!/^(src\/lib\/tokens|src\/theme\/tokens)\.ts$/.test(norm)) return [];
+  if (!/export const colors\s*=/.test(content)) {
+    return [{
+      file,
+      line: 1,
+      kind: "missing-tokens-file",
+      snippet: "tokens file must export a colors object",
+    }];
+  }
+  return [];
 }
 
 /** Pressable rows inside .map() should expose a testID template for tap-to-edit. */
@@ -371,6 +454,10 @@ export function auditFileContent(content: string, file: string): TapEditAuditIss
     ...findSpecialCaseTitleRender(content, file),
     ...findIconMissingTestIdIssues(content, file),
     ...findRawColorLiteralIssues(content, file),
+    ...findRawTextIssues(content, file),
+    ...findRawIconIssues(content, file),
+    ...findStringsFileIssues(content, file),
+    ...findTokensFileIssues(content, file),
   ];
 }
 
@@ -399,6 +486,10 @@ const KIND_LABELS: Record<TapEditAuditIssueKind, string> = {
   "rogue-tab-route": "screen in app/(tabs)/ but not Home/Settings — use app/(stack)/",
   "icon-missing-testid": "icon without testID (chevrons, close buttons etc.)",
   "raw-color-literal": "hardcoded color in StyleSheet — tap-edit won't change it",
+  "raw-text-in-jsx": "raw <Text> must be wrapped in <EditableText>",
+  "raw-icon-in-jsx": "raw vector icon must be wrapped in <EditableIcon>",
+  "missing-strings-file": "src/lib/strings.ts must export typed UI_STRINGS",
+  "missing-tokens-file": "tokens file must export a colors object",
 };
 
 /** Human + agent readable report (capped). */
@@ -421,11 +512,12 @@ export function formatTapEditAuditReport(
   const lines = [
     `Tap-edit hygiene audit: ${issues.length} issue(s) — ${summary}.`,
     "Fix so every tap-to-edit change saves to code (rule 7b).",
-    "- One label = one Text; editable strings in data (storage.ts, tabs arrays).",
-    "- testID on every label and mapped row; icon beside label in a row.",
+    "- One label = one <EditableText>; editable strings in UI_STRINGS (src/lib/strings.ts).",
+    "- testID on every EditableText; icon beside label in a row via <EditableIcon>.",
     "- Data-driven labels: {item.name} → testID ends with -name (e.g. `home-habit-${id}-name`).",
-    "- User-visible strings in storage.ts / data arrays — not JSX literals.",
-    "- No day === 'Mon' ? \"Monday\" : day hacks; no title.split() fragments.",
+    "- User-visible strings in UI_STRINGS or storage.ts — not JSX literals.",
+    "- No raw <Text>, <Ionicons>, <MaterialIcons>, etc. — use Editable* components.",
+    "- No raw color literals in StyleSheet; use colors tokens.",
     "",
   ];
 

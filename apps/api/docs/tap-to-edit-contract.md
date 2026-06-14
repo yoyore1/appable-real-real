@@ -1,281 +1,126 @@
-# Tap-to-Edit Contract
+# Tap-to-Edit Contract (editable-by-architecture)
 
-This is the **single source of truth** for how every tappable element in a v2 app must be labeled so that a tap correctly changes the source code.
+Goal: tap-to-edit works for 95%+ of user-visible copy and chrome, on any app
+we generate, without code patching.
 
-The build-time agent (`apps/api/src/agent/prompts.ts`) and the build-time audit
-(`apps/api/src/agent/tapEditAudit.ts`) both enforce this contract. The runtime
-patcher (`apps/api/src/agent/tapEdit.ts`), the build UI
-(`apps/web/src/screens/Build.tsx`), and the bridge
-(`infra/expo-template/template-files/appable-bridge.js`) all consume it.
+## Core idea
 
-If a build violates this contract, the audit will flag it and the agent will
-be told to fix it before the user can interact with the app.
+The build agent emits apps whose editable content is **data-driven** and whose
+editable elements are **self-identifying**. The runtime tap-to-edit engine
+never patches source code; it mutates a runtime override store and persists to
+AsyncStorage. Edits appear in ~16ms with no bundle rebuild.
 
----
+## The template layer
 
-## 1. Roles
+The template (`packages/template`) exposes three editable components and one
+provider. The build agent MUST use them for every user-visible element that
+could reasonably be edited by a non-technical customer.
 
-Every `testID` in a v2 app falls into exactly one of these roles. The role
-determines which element the testID labels, what the bridge picks as
-`boxTestId`, what the build UI shows in the tap-edit panel, and what the
-patcher patches.
+| Component | Use for |
+|-----------|---------|
+| `EditableText` | Any user-visible `<Text>` (titles, labels, body, prices, dates, button text). |
+| `EditableIcon` | Any `@expo/vector-icons` icon whose color might be edited. |
+| `EditableBackground` | Any container whose background color should be editable (cards, headers, rows, empty states). |
+| `TapEditProvider` | Wraps the app root. Must be inside `app/_layout.tsx` (platform-owned) so every screen gets it. |
 
-### 1.1 Card / Box (2 segments)
+Every editable component requires:
 
-A discrete visual card the user might tap to change its background.
+- `testID`: stable, unique string following the naming convention below.
+- `source`: `{ file, export, property? }` pointing to the source-of-truth file.
+- `defaultValue`: the value that would render without any override.
 
-| Shape | Examples |
-|---|---|
-| `<screen>-<thing>` | `home-stat-total`, `home-add-habit`, `home-view-all`, `home-empty`, `home-error`, `home-loading`, `settings-notif-row`, `settings-theme-row`, `add-habit-cancel`, `add-habit-save` |
+Example:
 
-The **whole** card gets a background edit when the user taps anywhere inside
-it. The patcher resolves these to the underlying component
-(`Card`, `AppButton`, `EmptyState`, etc.) via the component passthrough.
-
-### 1.2 Card data field (3 segments)
-
-A text/icon inside a card. Always suffixed with the field name.
-
-| Shape | Examples |
-|---|---|
-| `<card>-<field>` | `home-stat-total-value`, `home-stat-total-label`, `home-view-all-text`, `add-habit-name-label`, `add-habit-cancel-label` |
-
-Suffixes: `-value`, `-label`, `-name`, `-text`, `-desc`, `-message`,
-`-header`, `-icon`, `-chevron`, `-tagline`, `-built`, `-version`, `-toggle`,
-`-input`.
-
-The bridge's `boxTestId` walks up from a field testID to the parent card.
-This way, a tap on the "163" text still has `boxTestId = "home-stat-total"`
-(the Card), so background edits land on the Card.
-
-### 1.3 List item row (templated, 4+ segments)
-
-A row inside a mapped list. The row testID is the container; the field
-testIDs are the editable labels.
-
-| Shape | Examples |
-|---|---|
-| `<list>-${id}-row` | `home-habit-${habit.id}-row` |
-| `<list>-${id}-<field>` | `home-habit-${habit.id}-name`, `home-habit-${habit.id}-streak` |
-
-A list-item field testID follows the same suffix rules as 1.2
-(`-name`, `-title`, `-label`, `-desc`). The row testID ends in `-row`,
-`-card`, or `-item` (audit-enforced).
-
-### 1.4 Screen shell (always broad)
-
-The whole screen. Never tappable for individual style.
-
-| Shape | Examples |
-|---|---|
-| `<screen>-screen` | `home-screen`, `settings-screen`, `add-habit-screen` |
-
-The bridge's `isBroadTestId` recognizes these and excludes them from
-`boxTestId`. The build UI's `isCardBoxTestId` also returns `false` for them.
-
-### 1.5 Row / wrapper
-
-A layout container, **not** a card. The bridge won't pick these for
-background edits.
-
-| Shape | Examples |
-|---|---|
-| `<screen>-<list-or-section>` | `home-stats`, `home-quick-list`, `home-quick-title`, `add-habit-name-group` |
-
-Background edits on a row/wrapper would repaint too much. The build UI's
-`isCardBoxTestId` returns `false` for these.
-
-### 1.6 Icon
-
-A standalone icon. **Must have its own testID** so taps don't fall back to
-the parent row.
-
-| Shape | Examples |
-|---|---|
-| `<parent>-icon` | `home-add-habit-icon` |
-| `<parent>-chevron` | `home-view-all-chevron` |
-| `<parent>-close` | `add-habit-cancel-icon` |
-
-Audit-enforced: every `<Ionicons />`, `<MaterialIcons />`, etc. MUST have a
-`testID` prop.
-
----
-
-## 2. Forbidden patterns (audit will reject the build)
-
-These are the exact patterns the build-time audit scans for. A build that
-contains any of them is sent back to the agent for a fix-up round before the
-user sees the app.
-
-### 2.1 `<Ionicons />` / `<MaterialIcons />` etc. without a `testID`
-
-```jsx
-// BAD
-<Ionicons name="chevron-forward" size={20} color={colors.primary} />
-
-// GOOD
-<Ionicons testID="home-view-all-chevron" name="chevron-forward" size={20} color={colors.primary} />
+```tsx
+<EditableText
+  testID="home-title"
+  source={{ file: "src/lib/strings.ts", export: "UI_STRINGS", property: "homeTitle" }}
+  defaultValue={{ text: UI_STRINGS.homeTitle, color: colors.primary as string }}
+/>
 ```
 
-The 10 audited families: `Ionicons`, `MaterialIcons`,
-`MaterialCommunityIcons`, `Feather`, `AntDesign`, `Entypo`, `FontAwesome`,
-`Foundation`, `Octicons`, `SimpleLineIcons`, `Zocial`.
+## Data layer
 
-### 2.2 Raw color literal inside a `StyleSheet.create({...})`
+All user-visible strings and customer-facing style values live in typed data
+files. The LLM MUST generate these files and import them from editable
+components. Allowed source files:
 
-```jsx
-// BAD — tap-edit mutates the colors token, not this literal
-const styles = StyleSheet.create({
-  box: { backgroundColor: "#ff00aa", color: "red" },
-});
+- `src/lib/strings.ts` — typed `UI_STRINGS` object.
+- `src/lib/tokens.ts` — `colors`, `spacing`, `radius`, `typography` objects
+  exported by the scaffold. The build agent may add extra semantic color tokens
+  (e.g. `colors.heroBackground`) but must not duplicate existing tokens.
+- `src/lib/storage.ts` — user data arrays/objects loaded/saved with AsyncStorage.
+  Editable list items use their `id` in the testID, not a hardcoded label.
 
-// GOOD
-const styles = StyleSheet.create({
-  box: { backgroundColor: colors.primary, color: colors.text },
-});
-```
+Forbidden in generated app code:
 
-Audit-enforced for: `color`, `backgroundColor`, `borderColor`, `tintColor`,
-`fillColor`, `strokeColor` set to a hex/rgb/named string inside a
-`StyleSheet.create({...})` or `styles = {...}` block.
+- Hardcoded strings inside `<Text>`, `<Button>`, `Alert.alert`, or placeholder.
+- Raw hex/rgb/named colors inside `StyleSheet.create` or inline styles.
+- Non-editable `<Text>` without a `testID`.
+- `<Ionicons>` (or other vector icons) without a `testID` and `EditableIcon` wrapper.
 
-### 2.3 `<Text>` without a `testID`
+## testID convention
 
-Every `<Text>` in `app/(tabs)/`, `app/(stack)/`, `src/components/`, or
-`src/screens/` must have a `testID` prop.
+Roles determine what the tap UI can edit. Every user-facing element has ONE role.
 
-```jsx
-// BAD
-<Text style={styles.label}>Total Days</Text>
+| Role | Pattern | Editable properties |
+|------|---------|---------------------|
+| `text` | `<screen>-<thing>` or `<screen>-<thing>-<label>` | text, color, fontSize, fontWeight, fontFamily |
+| `icon` | `<parent>-icon`, `<parent>-chevron`, `<parent>-close` | color |
+| `background` | `<screen>-<thing>` (container) | backgroundColor |
+| `row/card` | `<screen>-<list>-<id>-row`, `<screen>-<thing>-card` | backgroundColor (on the container); text/icon on children |
+| `screen-shell` | `<screen>-screen` | none — never tappable |
+| `row-wrapper` | `<screen>-<list>`, `<screen>-<section>` | none — structural only |
 
-// GOOD
-<Text testID="home-stat-total-label" style={styles.label}>Total Days</Text>
-```
+For `.map()` rows, the row container gets `<list>-<id>-row` and each inner
+field gets `<list>-<id>-<field>`.
 
-### 2.4 `<Pressable>` inside `.map(...)` without a `-row` / `-card` / `-item` suffix
+Examples:
 
-```jsx
-// BAD — the row has no testID at all
-{habits.map((h) => (
-  <Pressable key={h.id} onPress={() => openHabit(h)}>...</Pressable>
-))}
+- `home-title`
+- `home-subtitle`
+- `home-stat-total-value`
+- `home-add-habit-icon`
+- `home-habit-${habit.id}-row`
+- `home-habit-${habit.id}-name`
+- `settings-notif-row`
+- `settings-notif-row-label`
 
-// BAD — wrong suffix
-{habits.map((h) => (
-  <Pressable testID={`home-habit-${h.id}`} onPress={() => openHabit(h)}>...</Pressable>
-))}
+## Runtime protocol
 
-// GOOD
-{habits.map((h) => (
-  <Pressable testID={`home-habit-${h.id}-row`} onPress={() => openHabit(h)}>...</Pressable>
-))}
-```
+The preview exposes every registered element via `window.__appableTapEditRegistry`
+(web) or the bridge (native). When a user taps an element:
 
-### 2.5 Hardcoded user copy in JSX
+1. The bridge picks the top-most registered element at the tap coordinates.
+2. It sends `{ type: "chat.send", message: "Tap edit: <testID> <intent>" }` to the API.
+3. The API looks up the element and calls `setOverride(testID, patch)`.
+4. The element re-renders from the override store.
 
-```jsx
-// BAD — copy that the user might want to edit is hardcoded
-<Text testID="home-empty-message">No habits yet. Tap + to add one.</Text>
+No source code is touched during the edit.
 
-// GOOD — copy lives in src/data/storage.ts and renders as {EMPTY.message}
-<Text testID="home-empty-message">{EMPTY_STATE.message}</Text>
-```
+## Persistence model
 
-### 2.6 Day-display ternary / split title
+Overrides are stored in AsyncStorage under `@appable/tap-edit-overrides`. They
+survive reload but do not survive a full project reset. The user's original
+source files remain unchanged. Later phases may write overrides back to source,
+but v1 is runtime-only.
 
-```jsx
-// BAD
-{day === "Mon" ? "Monday" : day}
+## Audit checklist
 
-// GOOD
-{DAYS.find((d) => d.id === day)?.label ?? day}
-```
+The build audit will reject any generated app that:
 
-```jsx
-// BAD
-<Text>{(title || "").split(" ")[0]} <Text>{(title || "").split(" ")[1]}</Text></Text>
+1. Imports `<Text>` from `react-native` for user-visible copy without wrapping it
+   in `<EditableText>`.
+2. Uses raw `<Ionicons>` instead of `<EditableIcon>`.
+3. Uses a raw hex/rgb/named color in `StyleSheet.create` or inline styles.
+4. Has a `<Text>` without a `testID`.
+5. Has an icon without a `testID`.
+6. Hardcodes user copy in JSX.
+7. Does not wrap the root in `<TapEditProvider>`.
+8. Does not include typed `UI_STRINGS` in `src/lib/strings.ts`.
 
-// GOOD — one Text, one source string
-<Text testID="card-title">{title}</Text>
-```
+## Migration note
 
-### 2.7 Screen route file in `app/(tabs)/` other than `index.tsx` / `settings.tsx`
-
-Only the Home and Settings tabs live in `app/(tabs)/`. Everything else
-(e.g. add-habit, edit-habit, habit-detail) goes in `app/(stack)/`.
-
----
-
-## 3. The tap pipeline
-
-When the user taps an element, three layers decide what to do. The contract
-above must be honored at each layer for a tap to land on the right code.
-
-```
-[User taps element with testID "X"]
-        │
-        ▼
-[Bridge: appable-bridge.js]
-   emits { testId, boxTestId, textTestId, backgroundOnly, screenBackground }
-        │
-        ▼
-[Build UI: Build.tsx]
-   1. isCardBoxTestId(boxTestId) → decides panel title
-      ("Screen background" | "Background" | "Element")
-   2. Builds the message: `[Tap edit] In the app, find the element with
-      testID "X" and {changes}. Change only what was tapped.`
-        │
-        ▼
-[API: tryTapEditPatch]
-   1. parseTapEditRequest(message) → { testId, changes, screen }
-   2. findComponentInstantiation(sources, testId) → which file to patch
-   3. attemptTapEditPatch → patched file + diff
-```
-
-### 3.1 Common mislabels and their fixes
-
-| Mislabel | What the user sees | Root cause | Fix |
-|---|---|---|---|
-| 163 box | Tap card → panel says "Screen background" | `isCardBoxTestId` had `^stat-` (start-anchored) regex but live testIDs are `home-stat-*` | Removed the start anchor; now matches `home-stat-*` and any text-leaf suffix. |
-| Empty state | Tap empty placeholder → no patch | `findComponentInstantiation` regex couldn't handle nested JSX child props (`icon={<Ionicons ... />}`) | Rewrote to walk back from the testID literal to the opening `<` and use `scanOpeningTagEnd`. |
-| Chevron without testID | Tap chevron → parent row repainted | `<Ionicons />` emitted without a testID; bridge fell back to parent | Audit now requires `testID` on every icon. |
-| Raw color in StyleSheet | Tap → "change color" does nothing | Patch mutates the `colors` token, not the literal | Audit now flags raw hex/rgb/named colors in `StyleSheet.create({...})`. |
-| Mapped row without `-row` | Tap row → patcher may patch every sibling | Patcher can't safely scope the change | Audit requires `-row` / `-card` / `-item` suffix on mapped Pressables. |
-
-### 3.2 Debugging a new mislabel
-
-1. **Look at the tap-trace log** (`apps/api/scripts/tap-trace.mjs`) to see
-   what each layer decided for the failing testID.
-2. **Find the row in the "Roles" table** that the testID is supposed to
-   match. If it doesn't match any role, the testID is malformed.
-3. **If the testID matches a role but the layer is wrong**, the fix is in
-   that layer:
-   - **Bridge** (`appable-bridge.js`): the `boxTestId` is wrong, or
-     `backgroundOnly` / `screenBackground` is mis-detected.
-   - **Build UI** (`Build.tsx`): the panel title is wrong, or the message
-     sent to the API references the wrong testID.
-   - **API patcher** (`tapEdit.ts`): the patcher can't find the testID, or
-     the patch lands on the wrong line. Check `findComponentInstantiation`
-     and the `patchComponentPassthroughInSources` branch selection.
-4. **If the testID is wrong in source**, the audit should have caught it
-   at build time. If the audit missed it, add a check to
-   `apps/api/src/agent/tapEditAudit.ts`.
-
----
-
-## 4. How to extend the contract
-
-When you add a new component or pattern:
-
-1. **Pick a role** (or define a new one) and document the testID shape.
-2. **Update the build-time agent prompt** to teach the new shape, with a
-   positive example and a negative example.
-3. **Add an audit check** in `apps/api/src/agent/tapEditAudit.ts` to enforce
-   the shape — name the issue kind like `<thing>-missing-testid` or
-   `<thing>-bad-testid-suffix`.
-4. **Add a unit test** to `apps/api/scripts/tap-misroute-test.mjs` (or a new
-   suite) that exercises the new pattern end-to-end.
-5. **Update the misroute / label-audit scripts** to include the new testID
-   shape.
-6. **Add a tap-trace entry** so the next time someone reports a mislabel, the
-   layer-by-layer decisions are visible in the log.
+This contract replaces the old regex/code-patching tap-to-edit approach. The
+patcher in `apps/api/src/agent/tapEdit.ts` is deprecated for new builds and will
+only be used as a fallback for legacy projects.

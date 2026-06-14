@@ -315,7 +315,49 @@ if (
     return best || seedEl;
   }
 
+  function findRegisteredTarget(x, y) {
+    var registry =
+      typeof window !== "undefined" && window.__appableTapEditRegistry
+        ? window.__appableTapEditRegistry
+        : null;
+    if (!registry || !registry.size) return null;
+    var candidates = [];
+    registry.forEach(function (spec) {
+      var e = document.querySelector('[data-testid="' + spec.testID + '"]');
+      if (!e) return;
+      var r = e.getBoundingClientRect();
+      if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
+        candidates.push({ spec: spec, el: e, area: r.width * r.height });
+      }
+    });
+    if (!candidates.length) return null;
+    candidates.sort(function (a, b) { return a.area - b.area; });
+    return candidates[0];
+  }
+
   function pickTarget(clickEl, x, y) {
+    var registered = findRegisteredTarget(x, y);
+    if (registered) {
+      var spec = registered.spec;
+      var el = registered.el;
+      var cs = window.getComputedStyle(el);
+      var text =
+        spec.defaultValue.text ||
+        shortLabel(el.innerText || el.textContent || "");
+      return {
+        root: el,
+        parts: [{ text: text, el: el, isIcon: false }],
+        anchorLabel: shortLabel(text),
+        textTestId: spec.testID,
+        boxTestId: spec.testID,
+        testId: spec.testID,
+        styleEl: el,
+        bgEl: el,
+        backgroundOnly: false,
+        screenBackground: false,
+      };
+    }
+
     var stack =
       typeof document.elementsFromPoint === "function"
         ? document.elementsFromPoint(x, y)
@@ -498,6 +540,10 @@ if (
       else if (msg.prop === "fontFamily") {
         if (msg.value === "System" || !msg.value) lastStyleEl.style.removeProperty("font-family");
         else lastStyleEl.style.fontFamily = msg.value;
+      }
+    } else if (msg.type === "appable:set-override") {
+      if (typeof window.__appableSetOverride === "function" && msg.testID) {
+        window.__appableSetOverride(msg.testID, msg.patch || {});
       }
     } else if (msg.type === "appable:clear-outline") {
       clearOutlineOnly();

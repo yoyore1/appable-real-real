@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import QRCode from "qrcode";
 import type { AppSpec } from "@appable/shared";
 import type { Route } from "../App.js";
@@ -137,7 +137,24 @@ export function Build({
   projectId: string;
   autostart?: boolean;
 }) {
-  const s = useProjectSocket(projectId);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+
+  function postToPreview(msg: object) {
+    iframeRef.current?.contentWindow?.postMessage(msg, "*");
+  }
+
+  const onTapEditApply = useCallback(
+    (event: { testID: string; patch: Record<string, string | number | undefined> }) => {
+      postToPreview({
+        type: "appable:set-override",
+        testID: event.testID,
+        patch: event.patch,
+      });
+    },
+    [],
+  );
+
+  const s = useProjectSocket(projectId, { onTapEditApply });
   const [tab, setTab] = useState<"build" | "brainstorm">("build");
   const [input, setInput] = useState("");
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
@@ -153,7 +170,6 @@ export function Build({
   const [previewNonce, setPreviewNonce] = useState(0);
 
   // --- tap-to-edit state ---
-  const iframeRef = useRef<HTMLIFrameElement>(null);
   const [editOn, setEditOn] = useState(false);
   const [tapped, setTapped] = useState<TappedElement | null>(null);
   const [draftTexts, setDraftTexts] = useState<string[]>([]);
@@ -166,10 +182,6 @@ export function Build({
   const [draftFont, setDraftFont] = useState<TapFontPreset>("sans");
   const [originalFont, setOriginalFont] = useState<TapFontPreset>("sans");
   const [pendingEditNotice, setPendingEditNotice] = useState(false);
-
-  function postToPreview(msg: object) {
-    iframeRef.current?.contentWindow?.postMessage(msg, "*");
-  }
 
   function hasPendingTapEdits(): boolean {
     if (!tapped) return false;

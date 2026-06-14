@@ -1,4 +1,7 @@
 import { PassThrough } from "node:stream";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import Docker from "dockerode";
 import { Redis } from "ioredis";
 import { getDb } from "@appable/db";
@@ -332,16 +335,32 @@ function urlsToEvent(urls: PreviewInfo): { webUrl: string; expUrl: string } {
   return { webUrl: urls.webUrl, expUrl: urls.expUrl };
 }
 
-/** Tap-to-edit bridge source lives in infra/expo-template/template-files/appable-bridge.js */
+/** Tap-to-edit bridge + template files live in infra/expo-template/template-files. */
+const TEMPLATE_DIR = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../../infra/expo-template/template-files",
+);
 
+const PLATFORM_TEMPLATE_FILES = [
+  BRIDGE_FILENAME,
+  APP_LAYOUT_PATH,
+  "src/lib/tapEdit.ts",
+  "src/components/EditableText.tsx",
+  "src/components/EditableIcon.tsx",
+  "src/components/EditableBackground.tsx",
+  "src/components/index.ts",
+];
 
-/** Restore platform-owned glue: bridge file, entry layouts, remove agent metro configs. */
+/** Restore platform-owned glue: bridge file, entry layouts, editable components, remove agent metro configs. */
 export async function repairPlatformGlue(projectId: string): Promise<void> {
   try {
-    const bridge = loadBridgeSource();
-    const existing = await readProjectFile(projectId, BRIDGE_FILENAME).catch(() => "");
-    if (existing !== bridge) {
-      await writeProjectFile(projectId, BRIDGE_FILENAME, bridge);
+    for (const rel of PLATFORM_TEMPLATE_FILES) {
+      const source = fs.readFileSync(path.join(TEMPLATE_DIR, rel), "utf8");
+      const existing = await readProjectFile(projectId, rel).catch(() => null);
+      if (existing !== source) {
+        await writeProjectFile(projectId, rel, source);
+        console.log(`[platform] synced ${rel} for ${projectId}`);
+      }
     }
 
     const entry = await readProjectFile(projectId, "index.ts").catch(() => null);
@@ -349,14 +368,6 @@ export async function repairPlatformGlue(projectId: string): Promise<void> {
       const normalized = normalizeIndexTs(entry);
       if (normalized !== entry) {
         await writeProjectFile(projectId, "index.ts", normalized);
-      }
-    }
-
-    const appLayout = await readProjectFile(projectId, APP_LAYOUT_PATH).catch(() => null);
-    if (appLayout !== null) {
-      const normalized = normalizeAppLayout(appLayout);
-      if (normalized !== appLayout) {
-        await writeProjectFile(projectId, APP_LAYOUT_PATH, normalized);
       }
     }
 
