@@ -344,7 +344,7 @@ const TEMPLATE_DIR = path.resolve(
 const PLATFORM_TEMPLATE_FILES = [
   BRIDGE_FILENAME,
   APP_LAYOUT_PATH,
-  "src/lib/tapEdit.ts",
+  "src/lib/tapEdit.tsx",
   "src/components/EditableText.tsx",
   "src/components/EditableIcon.tsx",
   "src/components/EditableBackground.tsx",
