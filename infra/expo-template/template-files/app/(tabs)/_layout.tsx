@@ -1,10 +1,10 @@
 import { Tabs } from "expo-router";
 import { BottomTabBar, type BottomTabBarProps } from "@react-navigation/bottom-tabs";
-import { Ionicons } from "@expo/vector-icons";
 import { Platform, View } from "react-native";
+import { EditableIcon } from "../../src/components";
 import { colors } from "../../src/theme/tokens";
 
-/** Platform-owned tab shell — not editable via tap-to-edit. */
+/** Platform-owned tab shell — icon colors are editable via tap-to-edit. */
 function AppTabBar(props: BottomTabBarProps) {
   const bar = <BottomTabBar {...props} />;
   if (Platform.OS === "web") {
@@ -32,7 +32,13 @@ export default function TabLayout() {
         options={{
           title: "Home",
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="home-outline" size={size} color={color} />
+            <EditableIcon
+              testID="home-tab-icon"
+              name="home-outline"
+              size={size}
+              source={{ file: "src/theme/tokens.ts", export: "colors", property: "primary" }}
+              defaultValue={{ color }}
+            />
           ),
         }}
       />
@@ -41,7 +47,13 @@ export default function TabLayout() {
         options={{
           title: "Settings",
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="settings-outline" size={size} color={color} />
+            <EditableIcon
+              testID="settings-tab-icon"
+              name="settings-outline"
+              size={size}
+              source={{ file: "src/theme/tokens.ts", export: "colors", property: "primary" }}
+              defaultValue={{ color }}
+            />
           ),
         }}
       />
