@@ -1,3 +1,4 @@
+import { PLATFORM_COMPONENT_FILES } from "../platformGlue.js";
 import { listProjectFiles, readProjectFile } from "../orchestrator.js";
 import {
   buildTapEditBackgroundMessage,
@@ -43,6 +44,7 @@ const SKIP_PROBE_TEXT = new Set([
 
 function isProbeRouteFile(path: string): boolean {
   const norm = path.replace(/\\/g, "/");
+  if (PLATFORM_COMPONENT_FILES.has(norm)) return false;
   return PROBE_ROUTE_GLOBS.some((re) => re.test(norm));
 }
 
@@ -122,11 +124,14 @@ function resolvePropFieldText(
   return records.get(id)?.[field] ?? records.get(id)?.[suffix] ?? null;
 }
 
+type ProbeRole = "text" | "icon" | "background";
+
 interface ProbeTarget {
   file: string;
   line: number;
   testId: string;
   text: string;
+  role: ProbeRole;
 }
 
 function collectProbeTargets(
@@ -155,7 +160,7 @@ function collectProbeTargets(
       const key = `${staticId}\0${text}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      targets.push({ file, line, testId: staticId, text });
+      targets.push({ file, line, testId: staticId, text, role: "text" });
       continue;
     }
 
@@ -171,27 +176,29 @@ function collectProbeTargets(
         const key = `${testId}\0${text}`;
         if (seen.has(key)) continue;
         seen.add(key);
-        targets.push({ file, line, testId, text });
+        targets.push({ file, line, testId, text, role: "text" });
       }
     }
   }
 
-  // New architecture: <EditableText testID=... defaultValue={{ text: "..." }} />.
-  const editableTextRe = /<EditableText\b([^>]*)defaultValue=\{\{[^}]*text:\s*["']([^"']+)["'][^}]*\}\}/g;
+  // New architecture: <EditableText testID=... defaultValue={{ text: ... }} />.
+  // Capture the text value expression only (stops at comma or }).
+  const editableTextRe = /<EditableText\b([^>]*)defaultValue=\{\{[^}]*text:\s*([^,}\s][^,}]*)\s*,?[^}]*\}\}/g;
   let em: RegExpExecArray | null;
   while ((em = editableTextRe.exec(content)) !== null) {
     const attrs = em[1] ?? "";
-    const text = em[2] ?? "";
+    const textExpr = em[2] ?? "";
     const staticId = parseStaticTestId(attrs);
     if (!staticId || isBroadContainerTestId(staticId)) continue;
+    const text = resolveLabelText(content, textExpr, records, staticId);
     if (!text || text.length < 2 || SKIP_PROBE_TEXT.has(text)) continue;
     const key = `${staticId}\0${text}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    targets.push({ file, line: lineNumberAt(content, em.index), testId: staticId, text });
+    targets.push({ file, line: lineNumberAt(content, em.index), testId: staticId, text, role: "text" });
   }
 
-  // New architecture: <EditableBackground testID=... /> (no text, but editable).
+  // New architecture: <EditableBackground testID=... /> (no text, background only).
   const editableBgRe = /<EditableBackground\b([^>]*)>/g;
   let bm: RegExpExecArray | null;
   while ((bm = editableBgRe.exec(content)) !== null) {
@@ -201,7 +208,20 @@ function collectProbeTargets(
     const key = `${staticId}\0__bg__`;
     if (seen.has(key)) continue;
     seen.add(key);
-    targets.push({ file, line: lineNumberAt(content, bm.index), testId: staticId, text: "" });
+    targets.push({ file, line: lineNumberAt(content, bm.index), testId: staticId, text: "", role: "background" });
+  }
+
+  // New architecture: <EditableIcon testID=... /> (no text, color only).
+  const editableIconRe = /<EditableIcon\b([^>]*)>/g;
+  let im: RegExpExecArray | null;
+  while ((im = editableIconRe.exec(content)) !== null) {
+    const attrs = im[1] ?? "";
+    const staticId = parseStaticTestId(attrs);
+    if (!staticId || isBroadContainerTestId(staticId)) continue;
+    const key = `${staticId}\0__icon__`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    targets.push({ file, line: lineNumberAt(content, im.index), testId: staticId, text: "", role: "icon" });
   }
 
   return targets;
@@ -242,34 +262,42 @@ export async function probeTapEditSave(projectId: string): Promise<TapEditProbeF
   for (const [file, content] of sources) {
     if (!isProbeRouteFile(file)) continue;
     for (const target of collectProbeTargets(file, content, records)) {
-      const newText = probeNewText(target.text);
-
-      const textKey = `text\0${target.testId}\0${target.text}`;
-      if (!probed.has(textKey)) {
-        probed.add(textKey);
-        const textMsg = buildTapEditReplaceMessage(target.testId, target.text, newText);
-        if (!probeTarget(sources, textMsg).ok) {
-          failures.push({ ...target, kind: "text" });
+      // Text edits only for actual text targets.
+      if (target.role === "text" && target.text) {
+        const newText = probeNewText(target.text);
+        const textKey = `text\0${target.testId}\0${target.text}`;
+        if (!probed.has(textKey)) {
+          probed.add(textKey);
+          const textMsg = buildTapEditReplaceMessage(target.testId, target.text, newText);
+          if (!probeTarget(sources, textMsg).ok) {
+            failures.push({ ...target, kind: "text" });
+          }
         }
       }
 
-      const colorKey = `color\0${target.testId}`;
-      if (!probed.has(colorKey)) {
-        probed.add(colorKey);
-        const colorMsg = buildTapEditColorMessage(target.testId, "#ff5500");
-        if (!probeTarget(sources, colorMsg).ok) {
-          failures.push({ ...target, kind: "color" });
+      // Color edits for text and icon targets.
+      if (target.role === "text" || target.role === "icon") {
+        const colorKey = `color\0${target.testId}`;
+        if (!probed.has(colorKey)) {
+          probed.add(colorKey);
+          const colorMsg = buildTapEditColorMessage(target.testId, "#ff5500");
+          if (!probeTarget(sources, colorMsg).ok) {
+            failures.push({ ...target, kind: "color" });
+          }
         }
       }
 
-      const rowId = deriveRowTestIdFromLabel(target.testId);
-      if (rowId) {
-        const bgKey = `bg\0${rowId}`;
+      // Background edits only for explicit background targets. We do not derive
+      // row backgrounds from labels anymore — that produced false positives on
+      // platform-owned Row/AppButton components that do not expose an editable
+      // background surface.
+      if (target.role === "background") {
+        const bgKey = `bg\0${target.testId}`;
         if (!probed.has(bgKey)) {
           probed.add(bgKey);
-          const bgMsg = buildTapEditBackgroundMessage(rowId, "#112233");
+          const bgMsg = buildTapEditBackgroundMessage(target.testId, "#112233");
           if (!probeTarget(sources, bgMsg).ok) {
-            failures.push({ ...target, testId: rowId, kind: "background" });
+            failures.push({ ...target, kind: "background" });
           }
         }
       }
