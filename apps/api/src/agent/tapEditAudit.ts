@@ -186,7 +186,7 @@ function shouldSkipTextTag(tag: string): boolean {
 
 function findTextIssues(content: string, file: string): TapEditAuditIssue[] {
   const issues: TapEditAuditIssue[] = [];
-  const re = /<Text\b/g;
+  const re = /<Text\b(?!Input)/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(content)) !== null) {
     const parsed = parseOpeningTagAt(content, m.index);
@@ -207,7 +207,7 @@ function findTextIssues(content: string, file: string): TapEditAuditIssue[] {
 function findRawTextIssues(content: string, file: string): TapEditAuditIssue[] {
   const issues: TapEditAuditIssue[] = [];
   // Match <Text> that is NOT inside an EditableText wrapper. We approximate by looking for <Text ...> not preceded by <EditableText> in the same file.
-  const re = /<Text\b/g;
+  const re = /<Text\b(?!Input)/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(content)) !== null) {
     const parsed = parseOpeningTagAt(content, m.index);

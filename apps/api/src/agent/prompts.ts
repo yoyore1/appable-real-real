@@ -106,7 +106,13 @@ ${PLATFORM_AGENT_RULES}
    - text:   <screen>-<thing> or <screen>-<thing>-<label>
              e.g. "home-title", "home-stat-total-value", "settings-notif-row-label".
    - icon:   <parent>-icon, <parent>-chevron, <parent>-close.
+     EVERY <EditableIcon> MUST have a testID. The tab bar icons in
+     app/(tabs)/_layout.tsx are platform-owned, but if you add any inline icon
+     in a screen, give it a testID with the parent element's testID + -icon,
+     -chevron, or -close suffix.
    - background/card: <screen>-<thing> (container) or <screen>-<list>-<id>-row.
+     EVERY row rendered by .map() MUST have a testID on its Pressable/Touchable
+     wrapper with the pattern <screen>-<list>-<id>-row.
    - screen-shell: <screen>-screen — never tappable.
    - row-wrapper: <screen>-<list>, <screen>-<section> — structural only.
 

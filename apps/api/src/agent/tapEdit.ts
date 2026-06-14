@@ -540,9 +540,18 @@ export function probeTapEditRequest(
 
 function hasEditableComponent(sources: Map<string, string>, testId: string): boolean {
   const escaped = testId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const pattern = new RegExp(`<Editable(?:Text|Icon|Background)\\b[^>]*testID=["'\\{]?${escaped}["'\\}]?`, "g");
+  // Static testID: testID="..." or testID={'...'} or testID={"..."}
+  const staticPattern = new RegExp(`<Editable(?:Text|Icon|Background)\\b[^>]*testID=["'\\{]?${escaped}["'\\}]?`, "g");
+  // Template literal testID: testID={\`...\`}
+  const templatePattern = new RegExp(`<Editable(?:Text|Icon|Background)\\b[^>]*testID=\\{\\\`[^\\\`]*\\$\\{[^}]+\\}[^\\\`]*\\\`}`, "g");
   for (const content of sources.values()) {
-    if (pattern.test(content)) return true;
+    if (staticPattern.test(content)) return true;
+    if (testId.includes("-")) {
+      // For template IDs like home-recipe-{id}-name, check if the pattern exists
+      const idPart = testId.replace(/.*-([a-zA-Z]+-[a-zA-Z0-9]+-)?/, ""); // heuristic
+      const loosePattern = new RegExp(`<Editable(?:Text|Icon|Background)\\b[^>]*testID=\\{\\\`[^\\\`]*${escaped.split("-").slice(0, -1).join("-")}[^\\\`]*\\\`}`, "g");
+      if (loosePattern.test(content)) return true;
+    }
   }
   return false;
 }
