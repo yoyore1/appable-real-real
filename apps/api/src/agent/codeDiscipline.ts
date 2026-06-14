@@ -32,6 +32,8 @@ export const PRIMITIVES_RULES = `## RULE 2 — PRIMITIVES BEFORE SCREENS
 Before screens, use iOS template components in src/components/ + tokens.ts:
 - Screen, Card, AppButton, Row, EmptyState, GroupedSection, SettingsRow,
   SegmentedControl, SearchField, Sheet, AppAlert, ActionMenu, AppIcon, Blur.
+- Editable primitives (tap-to-edit by architecture): EditableText, EditableIcon,
+  EditableBackground. These are required for every user-visible element.
 - System font for ALL functional UI (rows, labels, buttons, tabs). Display font
   only on hero headings if spec.vibe calls for it — never on tab labels or rows.
 - Call applyBrandPrimary(spec.vibe.primaryColor) in tokens.ts on first build.
@@ -65,19 +67,21 @@ export const MOTION_RULES = `## RULE 5 — MOTION (light, systematic)
 - Simple fade-in on screen mount if easy with existing APIs — no new animation libraries.
 - Restraint over sprinkles. One motion language, not per-screen one-offs.`;
 
-export const WIRING_AND_EDIT_RULES = `## RULE 6 — WIRING HONESTY + EDIT CONTRACT
+export const WIRING_AND_EDIT_RULES = `## RULE 6 — WIRING HONESTY + EDIT CONTRACT (editable-by-architecture)
 - Every interactive element does something real. ZERO dead taps.
 - Lists render from real store data — never hardcoded JSX rows.
 - Device features (camera, notifications, etc.) use real expo modules when in spec — no mock Alert("would open").
-- Card/row Pressable wrappers users tap for BACKGROUND color edits need testID on the container.
+- Card/row Pressable wrappers that users tap for BACKGROUND color edits must be wrapped in <EditableBackground>.
 
-Edit contract (binding):
-- Every customer-visible Text has its own testID.
-- Icons: @expo/vector-icons ONLY, in SIBLING nodes — never emoji as UI icons.
-- .map() rows: stable testIDs on row AND inner Text nodes.
-- Renames through data, not JSX literals.
-- Inline style overrides on specific Text nodes are PERMITTED — tap-to-edit saves color/font there.
-  Do not refactor patcher-style inline overrides into abstractions.`;
+Editable-by-architecture contract (binding):
+- Every customer-visible text uses <EditableText> with a stable testID and a source pointing to UI_STRINGS or storage data.
+- Every vector icon uses <EditableIcon> with a stable testID and a source pointing to tokens.colors.
+- Every card, header, row, or container whose background color should be editable uses <EditableBackground> with a source pointing to tokens.colors.
+- Source-of-truth files: src/lib/strings.ts (UI_STRINGS), src/theme/tokens.ts (colors), src/lib/storage.ts (user data arrays).
+- Icons: @expo/vector-icons ONLY via EditableIcon, in SIBLING nodes — never emoji as UI icons.
+- .map() rows: stable testIDs on the EditableBackground row AND inner EditableText nodes.
+- Renames through data, not JSX literals. NEVER hardcode user-visible strings in JSX.
+- Inline style overrides on specific Text nodes are FORBIDDEN for tap-to-edit edits — use the EditableText defaultValue and the override store instead.`;
 
 export const SELF_REVIEW_RULES = `## RULE 7 — SELF-REVIEW (before BUILD COMPLETE)
 Re-read every screen and fix before finishing:
@@ -96,9 +100,13 @@ Re-read every screen and fix before finishing:
 - [ ] Label+value rows survive 20-char names (label flex:1 + ellipsize)?
 - [ ] Lists work at 0 items (empty state) and many items (scroll)?
 - [ ] iOS feel: no Material tells, 17pt body, grouped lists, AppAlert/ActionMenu wrappers?
+- [ ] Every customer-visible text is <EditableText> with testID + source?
+- [ ] Every vector icon is <EditableIcon> with testID + source?
+- [ ] Every editable-background container is <EditableBackground> with testID + source?
+- [ ] No raw <Text>, no raw <Ionicons>, no raw color literals in generated screens?
 
 FINAL BAR: boring consistent codebase + normie believes it's App Store ready +
-every visible label/card is tappable and patchable.`;
+every visible label/card is tappable and editable by architecture.`;
 
 export const TAP_HYGIENE_GATE = `## RULE 7b — TAP-TO-EDIT GATE (automated, runs after you finish)
 An automated hygiene pass runs after build and every edit. Pretty but untappable = FAILED.

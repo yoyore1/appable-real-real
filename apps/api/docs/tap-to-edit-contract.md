@@ -12,9 +12,9 @@ AsyncStorage. Edits appear in ~16ms with no bundle rebuild.
 
 ## The template layer
 
-The template (`packages/template`) exposes three editable components and one
-provider. The build agent MUST use them for every user-visible element that
-could reasonably be edited by a non-technical customer.
+The template (`infra/expo-template/template-files`) exposes three editable
+components and one provider. The build agent MUST use them for every
+user-visible element that could reasonably be edited by a non-technical customer.
 
 | Component | Use for |
 |-----------|---------|

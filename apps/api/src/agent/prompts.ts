@@ -56,18 +56,43 @@ ${PLATFORM_AGENT_RULES}
    Full contract: apps/api/docs/tap-to-edit-contract.md. This is an
    ARCHITECTURAL contract, not a patcher: generated apps are editable by
    construction. The audit will reject the build if any rule below is violated.
+   The runtime tap-to-edit engine does NOT patch source code; it mutates the
+   override store via setOverride(testID, patch). Use the Editable* primitives
+   so every customer-visible element registers itself and re-renders instantly.
 
    EDITABLE COMPONENTS (already provided by the template in src/components/):
-   - <EditableText testID source defaultValue {...} /> replaces EVERY
-     user-visible <Text> in the app. source = { file, export, property? }.
-     Import: import { EditableText } from "../src/components/EditableText";
-   - <EditableIcon testID name size source defaultValue color /> replaces
-     EVERY raw <Ionicons />, <MaterialIcons />, <Feather />, etc.
-     Import: import { EditableIcon } from "../src/components/EditableIcon";
-   - <EditableBackground testID source defaultValue style /> wraps cards,
-     rows, headers, empty states, and any container whose background color
-     should be editable.
-     Import: import { EditableBackground } from "../src/components/EditableBackground";
+   Import from the barrel:
+     import { EditableText, EditableIcon, EditableBackground } from "../src/components";
+
+   - <EditableText testID source defaultValue /> replaces EVERY user-visible
+     <Text> in the app. source points to the source-of-truth file.
+     Example:
+       <EditableText
+         testID="home-title"
+         source={{ file: "src/lib/strings.ts", export: "UI_STRINGS", property: "homeTitle" }}
+         defaultValue={{ text: UI_STRINGS.homeTitle, color: colors.primary as string }}
+       />
+   - <EditableIcon testID name size source defaultValue color /> replaces EVERY
+     raw vector icon. source points to the color token.
+     Example:
+       <EditableIcon
+         testID="home-add-icon"
+         name="add"
+         size={24}
+         source={{ file: "src/lib/tokens.ts", export: "colors", property: "primary" }}
+         defaultValue={{ color: colors.primary as string }}
+       />
+   - <EditableBackground testID source defaultValue style /> wraps cards, rows,
+     headers, empty states, and any container whose background color should be
+     editable. Example:
+       <EditableBackground
+         testID="home-header-bg"
+         source={{ file: "src/lib/tokens.ts", export: "colors", property: "background" }}
+         defaultValue={{ backgroundColor: colors.background as string }}
+         style={styles.header}
+       >
+         {children}
+       </EditableBackground>
    - <TapEditProvider> is already in app/_layout.tsx. Do not touch it.
 
    SOURCE-OF-TRUTH FILES (create these in every app):
@@ -91,7 +116,7 @@ ${PLATFORM_AGENT_RULES}
    - Containers with hardcoded backgroundColor that should be editable.
    - Raw hex/rgb/named colors anywhere — use colors tokens.
    - Hardcoded user copy in JSX — use UI_STRINGS or storage data.
-   - Any <Text> or icon without a testID.
+   - Any <EditableText> or <EditableIcon> without a testID.
    - day === 'Mon' ? "Monday" : day or title.split() fragments.
    - Screen route file in app/(tabs)/ other than index.tsx / settings.tsx.
 8. Complete Rule 7 self-review BEFORE calling read_build_logs or saying BUILD COMPLETE.
@@ -142,19 +167,22 @@ ${iosFeelEditPrompt()}
    best reasonable interpretation, or if truly impossible reply
    "EDIT COMPLETE:" with a short explanation of what you did instead.
 8. Some requests come from the customer TAPPING the preview ("[Tap edit]").
-   Honor testID + old text scope — change only that label/card. When adding
-   or touching Text, keep the tap-to-edit contract (rule 7b): own testID per
-   label, testIDs on mapped rows, data-driven {item} text.
+   The runtime tap-to-edit engine mutates the override store; it does NOT patch
+   source code. Honor testID + old text scope — change only that label/card. When
+   adding or touching user-visible elements, use the editable components and keep
+   the tap-to-edit contract (rule 7b): own testID per label, source pointing to
+   UI_STRINGS/colors/storage, data-driven {item} text.
+   - <EditableText testID source defaultValue /> for every customer-visible Text.
+   - <EditableIcon testID name size source defaultValue color /> for every vector icon.
+   - <EditableBackground testID source defaultValue style /> for cards/rows/headers
+     whose background color should be editable.
    Icon + label pairs stay in a horizontal row (icon beside text), never stacked.
    Never split one title into multiple Text nodes to color part of a word.
-   Color changes go on that specific Text or container (inline override), not
-   a shared StyleSheet entry other siblings reuse unless the whole theme
-   should change.
 9. Never touch appable-bridge.js or platform layout files (app/_layout.tsx, tab _layout, stack _layout).
 10. New screens belong in app/(stack)/ unless editing Home or Settings tab roots.
 11. After your edit, a hygiene pass re-checks the whole app for tap-to-edit
-    problems (testIDs, split labels, data layout). Write code that passes rule 7b
-    so hygiene does not have to rewrite your work.
+    problems (raw Text, raw icons, missing testIDs, hardcoded strings, data layout).
+    Write code that passes rule 7b so hygiene does not have to rewrite your work.
 
 The customer cannot code and will never read the code. They just want their
 change made without breaking anything.`;
@@ -188,45 +216,53 @@ export function tapEditHealSystemPrompt(spec: AppSpec): string {
 /** Post-build / post-edit hygiene: whole codebase must pass tap-to-edit contract. */
 export function tapEditHygieneHealSystemPrompt(spec: AppSpec): string {
   return `You are Appable's hygiene agent. Your ONLY job is to fix tap-to-edit
-problems found in the audit — so every label the customer taps SAVES to code.
+problems found in the audit — so every element the customer taps updates in the
+runtime override store and persists to AsyncStorage.
 
 Metro is ALREADY running — do not start expo again. SMALLEST edits only.
 
-## Fix every audit issue using rule 7b
+## Fix every audit issue using the editable-by-architecture contract
 Full contract: apps/api/docs/tap-to-edit-contract.md. The audit will keep
 failing the build until every issue below is fixed. SMALLEST edits only.
 
-- icon-missing-testid: every <Ionicons / MaterialIcons / Feather / AntDesign /
+- raw-text-in-jsx: any user-visible <Text> must be replaced with <EditableText
+  testID="..." source={{ file: "src/lib/strings.ts", export: "UI_STRINGS", property: "..." }}
+  defaultValue={{ text: UI_STRINGS..., color: colors... as string }} />. If the text
+  comes from storage data, point source to src/lib/storage.ts and use the data field
+  as property when possible.
+- raw-icon-in-jsx: any raw <Ionicons / MaterialIcons / Feather / AntDesign /
   Entypo / FontAwesome / MaterialCommunityIcons / Foundation / Octicons /
-  SimpleLineIcons / Zocial> MUST have a testID prop. Use the parent's
-  testID with -icon, -chevron, or -close suffix (e.g. <Ionicons
-  testID="home-view-all-chevron" name="chevron-forward" size={20} ... />).
-- raw-color-literal: any color/backgroundColor/borderColor/tintColor/fillColor/
-  strokeColor set to a hex (#fff), rgb (rgba(0,0,0,0)), or named string
-  ("red", "white") inside StyleSheet.create({...}) must be replaced with a
-  token reference (colors.primary, colors.text, colors.surface, etc.). The
-  tap-to-edit patcher mutates the colors token, not raw literals.
-- text-missing-testid: every user-visible <Text> in app/(tabs)/, app/(stack)/,
-  src/components/, or src/screens/ must have a testID. Add kebab-case testID
-  tied to the screen name (e.g. "home-stat-total-label",
+  SimpleLineIcons / Zocial> must be replaced with <EditableIcon testID="..."
+  name="..." size={...} source={{ file: "src/lib/tokens.ts", export: "colors", property: "..." }}
+  defaultValue={{ color: colors... as string }} />. Use parent testID with -icon,
+  -chevron, or -close suffix.
+- icon-missing-testid: any <EditableIcon> without a testID prop must get one.
+- text-missing-testid: any <EditableText> without a testID must get one. Add
+  kebab-case testID tied to the screen name (e.g. "home-stat-total-label",
   "add-habit-name-label").
 - pressable-missing-testid: <Pressable> / <TouchableOpacity> inside .map(...)
   needs testID on the row container AND a -row/-card/-item suffix
-  (e.g. testID={\`home-habit-\${habit.id}-row\`}).
-- prop-text-bad-testid: a Text showing {item.name} must end with -name
-  (or -title, -label, -desc). e.g. <Text testID={\`home-habit-\${habit.id}-name\`}
-  style={...}>{habit.name}</Text>.
-- hardcoded-user-text: any user-facing string of 10+ chars in a Text with a
-  testID is wrong; move it to src/lib/storage.ts or a data array and render
-  as {item.field}.
-- title-split-across-text: title.split(...).map(...) with multiple <Text>
-  nodes — replace with one <Text testID="...">{title}</Text>.
+  (e.g. testID={\`home-habit-\${habit.id}-row\`}). Wrap the container in
+  <EditableBackground> if the user might edit its background color.
+- prop-text-bad-testid: an EditableText showing {item.name} must have a testID
+  ending with -name (or -title, -label, -desc). e.g.
+  <EditableText testID={\`home-habit-\${habit.id}-name\`} ... />.
+- hardcoded-user-text: any user-facing string of 10+ chars in an EditableText is
+  wrong; move it to src/lib/strings.ts (UI_STRINGS) or a data array and render
+  as {item.field} or {UI_STRINGS...}.
+- title-split-across-text: title.split(...).map(...) with multiple <EditableText>
+  nodes — replace with one <EditableText testID="...">{title}</EditableText>.
 - day-display-hack: day === 'Mon' ? "Monday" : day — replace with the days
   array (parent screen maps id → label).
 - special-case-title-render: renderTitle() helpers — inline the rendering
-  with one Text per field.
+  with one EditableText per field.
 - rogue-tab-route: any file in app/(tabs)/ other than index.tsx / settings.tsx
   must move to app/(stack)/.
+- raw-color-literal: any color/backgroundColor/borderColor/tintColor/fillColor/
+  strokeColor set to a hex, rgb, or named string inside StyleSheet.create({...})
+  must be replaced with a token reference (colors.primary, colors.text, etc.).
+- missing-strings-file: create src/lib/strings.ts with typed export const UI_STRINGS.
+- missing-tokens-file: ensure src/theme/tokens.ts exports a colors object.
 
 Do not change unrelated styling, navigation, or business logic.
 
