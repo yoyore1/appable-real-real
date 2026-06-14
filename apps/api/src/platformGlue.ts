@@ -9,6 +9,28 @@ export const BRIDGE_IMPORT = 'import "./appable-bridge.js";';
 export const BRIDGE_IMPORT_APP_LAYOUT = 'import "../appable-bridge.js";';
 export const APP_LAYOUT_PATH = "app/_layout.tsx";
 
+/** Platform-owned base components in src/components/ (do not modify — use them). */
+export const PLATFORM_COMPONENT_FILES = new Set([
+  "src/components/Screen.tsx",
+  "src/components/Card.tsx",
+  "src/components/AppButton.tsx",
+  "src/components/Row.tsx",
+  "src/components/EmptyState.tsx",
+  "src/components/GroupedSection.tsx",
+  "src/components/SettingsRow.tsx",
+  "src/components/SegmentedControl.tsx",
+  "src/components/SearchField.tsx",
+  "src/components/Sheet.tsx",
+  "src/components/AppAlert.tsx",
+  "src/components/ActionMenu.tsx",
+  "src/components/Blur.tsx",
+  "src/components/AppIcon.tsx",
+  "src/components/EditableText.tsx",
+  "src/components/EditableIcon.tsx",
+  "src/components/EditableBackground.tsx",
+  "src/components/index.ts",
+]);
+
 /** Agent must never write these — platform owns them. */
 export const AGENT_WRITE_DENY = new Set([
   BRIDGE_FILENAME,
@@ -19,6 +41,7 @@ export const AGENT_WRITE_DENY = new Set([
   "metro.config.ts",
   "metro.config.mjs",
   "metro.config.cjs",
+  ...PLATFORM_COMPONENT_FILES,
 ]);
 
 const BRIDGE_PATH = path.resolve(
@@ -122,6 +145,10 @@ export const PLATFORM_AGENT_RULES = `### PLATFORM FILES (never modify — auto-r
 - app/(tabs)/_layout.tsx — tab shell: Home + Settings only (platform-owned)
 - app/(stack)/_layout.tsx — stack shell for secondary screens (platform-owned)
 - metro.config.js/ts — NEVER create or edit Metro config to "fix" resolution errors
+- src/components/ base components (Screen, Card, AppButton, Row, EmptyState,
+  GroupedSection, SettingsRow, SegmentedControl, SearchField, Sheet, AppAlert,
+  ActionMenu, Blur, AppIcon, EditableText, EditableIcon, EditableBackground) are
+  platform-owned. Use them from screens; do NOT rewrite their internals.
 Tab bar = Home + Settings ONLY. Put habits, detail, legal, add flows in app/(stack)/.
 Navigate with router.push('/habits') — stack screens must NOT live under app/(tabs)/.
 If read_build_logs mentions appable-bridge, fix app/(tabs)/*.tsx, app/(stack)/*.tsx, or src/ only.`;

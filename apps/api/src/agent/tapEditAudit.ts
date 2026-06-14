@@ -1,4 +1,5 @@
 import { listProjectFiles, readProjectFile } from "../orchestrator.js";
+import { PLATFORM_COMPONENT_FILES } from "../platformGlue.js";
 
 export type TapEditAuditIssueKind =
   | "text-missing-testid"
@@ -30,14 +31,6 @@ const AUDIT_GLOBS = [
   /^src\/lib\/.+\.(tsx|ts)$/,
   /^App\.tsx$/,
 ];
-
-const PLATFORM_COMPONENT_FILES = new Set([
-  "src/components/EditableText.tsx",
-  "src/components/EditableIcon.tsx",
-  "src/components/EditableBackground.tsx",
-  "src/lib/tapEdit.ts",
-  "src/components/index.ts",
-]);
 
 const TAB_BAR_ONLY = new Set(["index", "settings"]);
 

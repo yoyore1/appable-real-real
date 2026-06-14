@@ -34,6 +34,8 @@ Before screens, use iOS template components in src/components/ + tokens.ts:
   SegmentedControl, SearchField, Sheet, AppAlert, ActionMenu, AppIcon, Blur.
 - Editable primitives (tap-to-edit by architecture): EditableText, EditableIcon,
   EditableBackground. These are required for every user-visible element.
+- The base components above are platform-owned. USE them in your screens; do NOT
+  rewrite their internals or add Editable* wrappers inside them.
 - System font for ALL functional UI (rows, labels, buttons, tabs). Display font
   only on hero headings if spec.vibe calls for it — never on tab labels or rows.
 - Call applyBrandPrimary(spec.vibe.primaryColor) in tokens.ts on first build.
